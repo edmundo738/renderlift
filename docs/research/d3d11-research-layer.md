@@ -163,12 +163,28 @@ corrigido (v3.1):
 - exports inalterados: `HRESULT WINAPI fn(LPVOID)`, mesmos 3 nomes;
   OBSERVE-only, zero steering.
 
-Leitura do **próximo** teste (v3.1): existe `RenderLift.entry` ao lado da
-DLL ou em `%TEMP%` → entry alcançado, e o último `cp=N` / linha `seh`
-(qualquer dos dois sinks) dá o passo+endereço exatos; **não** existe marca
-em nenhum sink e o devolvido é `0xc0000005` → a falha está na *entrega* da
-thread remota (stack prologue/anti-tamper/EDR), move seguinte: stub de
-thread mínimo / forma de injeção alternativa.
+**Run 4 (v3.1) — caso B da matriz, com dupla testemunha.**
+`returned 0xc0000005`; **nenhuma** `RenderLift.entry` (nem pasta-lab, nem
+`%TEMP%`), **nenhum** log em nenhum sink. Leitura restrita e honesta: nenhuma
+evidência sobreviveu antes do AV — o que ainda não é "pré-DLL provado", é a
+fronteira seguinte a isolar.
+
+**Experimento v3.2 (fronteira CreateRemoteThread → remote entry):**
+
+- export nova `RenderLiftEntryProbe`: stub mínimo — sem CRT/STL/globals de
+  escrita/D3D11/MinHook/SEH; só kernel32 via IAT + literal `.rdata` + o
+  LPVOID param; escreve `RLPROBE1 ok` no ficheiro dado por
+  `--param <path>` (tornado remoto via VirtualAllocEx+WriteProcessMemory) e
+  retorna sempre `0x12345678`;
+- o loader, antes de **qualquer** chamada remota, faz `VirtualQueryEx` na
+  página do entry (State/Type/Protect/AllocationBase/RegionSize/guard) e
+  **aborta a chamada** se a página não for executável — diagnóstico sem
+  crash; e despeja as mitigações do processo (`GetProcessMitigationPolicy`:
+  DEP/ASLR/CFG/ACG/Signature/ImageLoad/ExtensionPoint);
+- leitura: probe marca + `0x12345678` → fronteira sã, foco volta ao entry
+  de `RenderLiftInstall`; probe também termina `0xC0000005` sem ficheiro →
+  a falha está na **entrega** da thread remota (stack/anti-tamper/EDR), e
+  NÃO se volta a D3D11 até resolver isso.
 
 ## 6. Roadmap da camada
 

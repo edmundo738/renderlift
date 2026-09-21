@@ -56,6 +56,8 @@ void usage() {
         "  --exe <name>   find process by executable name (Toolhelp32 snapshot)\n"
         "  --pid <id>     attach to an explicit process id\n"
         "  --call <name>  entry point to invoke after load (default RenderLiftInstall)\n"
+        "  --param <ansi> ANSI string staged remotely and passed as the call's LPVOID\n"
+        "                 (e.g. --call RenderLiftEntryProbe --param C:\\lab\\probe.out)\n"
         "\n"
         "Requires the game to be running and authorized for testing (SECURITY.md).\n");
 }
@@ -225,11 +227,146 @@ std::uint32_t findExportRva(const std::wstring& dllPath, const char* exportName)
     return 0;
 }
 
+// ── v3.2 frontier diagnostics ───────────────────────────────────────────────
+// Before creating the remote thread we (1) dump the target process'
+// mitigation policies that can kill remote execution (ACG / CFG-strict /
+// signature / image-load rules), and (2) VirtualQueryEx the entry page so a
+// protection problem is diagnosed BEFORE it becomes a 0xC0000005.
+
+const char* stateName(DWORD s) {
+    switch (s) {
+    case MEM_COMMIT: return "COMMIT";
+    case MEM_RESERVE: return "RESERVE";
+    case MEM_FREE: return "FREE";
+    default: return "?";
+    }
+}
+const char* typeName(DWORD t) {
+    switch (t) {
+    case MEM_IMAGE: return "IMAGE";
+    case MEM_MAPPED: return "MAPPED";
+    case MEM_PRIVATE: return "PRIVATE";
+    default: return "?";
+    }
+}
+const char* protectName(DWORD p) {
+    switch (p & 0xFF) {
+    case PAGE_NOACCESS: return "NOACCESS";
+    case PAGE_READONLY: return "READONLY";
+    case PAGE_READWRITE: return "READWRITE";
+    case PAGE_WRITECOPY: return "WRITECOPY";
+    case PAGE_EXECUTE: return "EXECUTE";
+    case PAGE_EXECUTE_READ: return "EXECUTE_READ";
+    case PAGE_EXECUTE_READWRITE: return "EXECUTE_READWRITE";
+    case PAGE_EXECUTE_WRITECOPY: return "EXECUTE_WRITECOPY";
+    default: return "?";
+    }
+}
+bool isExecutableProtect(DWORD p) {
+    return (p & (PAGE_EXECUTE | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE |
+                 PAGE_EXECUTE_WRITECOPY)) != 0;
+}
+
+void printMitigationPolicies(HANDLE process) {
+    bool any = false;
+    PROCESS_MITIGATION_DEP_POLICY dep{};
+    if (GetProcessMitigationPolicy(process, ProcessDEPPolicy, &dep, sizeof dep)) {
+        std::printf("mitig DEP: Enable=%d Permanent=%d\n", dep.Enable, dep.Permanent);
+        any = true;
+    }
+    PROCESS_MITIGATION_ASLR_POLICY aslr{};
+    if (GetProcessMitigationPolicy(process, ProcessASLRPolicy, &aslr, sizeof aslr)) {
+        std::printf("mitig ASLR: ForceRelocate=%d BottomUp=%d HighEntropy=%d StrippedNo=%d\n",
+                    aslr.EnableForceRelocateImages, aslr.EnableBottomUpRandomization,
+                    aslr.EnableHighEntropy, aslr.DisallowStrippedImages);
+        any = true;
+    }
+    PROCESS_MITIGATION_CONTROL_FLOW_GUARD_POLICY cfg{};
+    if (GetProcessMitigationPolicy(process, ProcessControlFlowGuardPolicy, &cfg,
+                                   sizeof cfg)) {
+        std::printf("mitig CFG: Enable=%d StrictMode=%d ExportSuppress=%d\n",
+                    cfg.EnableControlFlowGuard, cfg.StrictMode, cfg.EnableExportSuppression);
+        any = true;
+    }
+    PROCESS_MITIGATION_DYNAMIC_CODE_POLICY acg{};
+    if (GetProcessMitigationPolicy(process, ProcessDynamicCodePolicy, &acg, sizeof acg)) {
+        std::printf("mitig ACG: ProhibitDynamicCode=%d ThreadOptOut=%d RemoteDowngrade=%d\n",
+                    acg.ProhibitDynamicCode, acg.AllowThreadOptOut, acg.AllowRemoteDowngrade);
+        any = true;
+    }
+    PROCESS_MITIGATION_SIGNATURE_POLICY sig{};
+    if (GetProcessMitigationPolicy(process, ProcessSignaturePolicy, &sig, sizeof sig)) {
+        std::printf("mitig SIGN: MicrosoftSignedOnly=%d StoreSignedOnly=%d OptIn=%d\n",
+                    sig.MicrosoftSignedOnly, sig.StoreSignedOnly, sig.MitigationOptIn);
+        any = true;
+    }
+    PROCESS_MITIGATION_IMAGE_LOAD_POLICY img{};
+    if (GetProcessMitigationPolicy(process, ProcessImageLoadPolicy, &img, sizeof img)) {
+        std::printf("mitig IMGLOAD: NoRemoteImages=%d NoLowIL=%d PreferSystem32=%d\n",
+                    img.NoRemoteImages, img.NoLowMandatoryLabelImages, img.PreferSystem32Images);
+        any = true;
+    }
+    PROCESS_MITIGATION_EXTENSION_POINT_DISABLE_POLICY ext{};
+    if (GetProcessMitigationPolicy(process, ProcessExtensionPointDisablePolicy, &ext,
+                                   sizeof ext)) {
+        std::printf("mitig EXTPT: DisableExtensionPoints=%d\n", ext.DisableExtensionPoints);
+        any = true;
+    }
+    if (!any) {
+        std::printf("mitig: GetProcessMitigationPolicy unavailable (%lu)\n", GetLastError());
+    }
+}
+
+// Inspect the page the remote entry lands on. Returns executable-or-not; the
+// caller aborts the remote call when the answer is no (no point crashing the
+// target for information we already have).
+bool describeRemoteEntry(HANDLE process, const void* va) {
+    MEMORY_BASIC_INFORMATION mbi{};
+    if (VirtualQueryEx(process, va, &mbi, sizeof mbi) == 0) {
+        std::fprintf(stderr, "warn: VirtualQueryEx(%p) failed (%lu)\n", va, GetLastError());
+        return true;  // can't know — let the call proceed
+    }
+    const bool executable =
+        (mbi.State == MEM_COMMIT) && isExecutableProtect(mbi.Protect);
+    std::printf(
+        "entry page: base=%p region=0x%zx state=%s type=%s protect=%s(0x%02lx) "
+        "allocBase=%p allocProtect=0x%02lx guard=%d => %s\n",
+        mbi.BaseAddress, mbi.RegionSize, stateName(mbi.State), typeName(mbi.Type),
+        protectName(mbi.Protect), static_cast<unsigned long>(mbi.Protect),
+        mbi.AllocationBase, static_cast<unsigned long>(mbi.AllocationProtect),
+        (mbi.Protect & PAGE_GUARD) != 0 ? 1 : 0,
+        executable ? "EXECUTABLE" : "NOT EXECUTABLE");
+    return executable;
+}
+
+// Stage an ANSI string in the target as the remote call's LPVOID param.
+LPVOID writeRemoteParam(HANDLE process, const std::string& ansi) {
+    if (ansi.empty()) return nullptr;
+    const SIZE_T bytes = ansi.size() + 1;
+    LPVOID remote = VirtualAllocEx(process, nullptr, bytes, MEM_COMMIT | MEM_RESERVE,
+                                   PAGE_READWRITE);
+    if (remote == nullptr) {
+        std::fprintf(stderr, "warn: VirtualAllocEx(param) failed (%lu)\n", GetLastError());
+        return nullptr;
+    }
+    SIZE_T written = 0;
+    if (!WriteProcessMemory(process, remote, ansi.c_str(), bytes, &written) ||
+        written != bytes) {
+        std::fprintf(stderr, "warn: WriteProcessMemory(param) failed (%lu)\n",
+                     GetLastError());
+        VirtualFreeEx(process, remote, 0, MEM_RELEASE);
+        return nullptr;
+    }
+    std::printf("param staged remotely at %p (\"%s\", %zu bytes)\n", remote, ansi.c_str(),
+                written);
+    return remote;
+}
+
 // Call `exportName` inside the injected module remotely. ASLR-safe: we add
 // the export's RVA (parsed from the file image — see above) to the module's
 // REMOTE base address, which is where Windows actually mapped it.
 bool callRemoteExport(HANDLE process, HMODULE remoteModule, const std::string& dllPath,
-                      const char* exportName) {
+                      const char* exportName, LPVOID remoteParam) {
     const std::uint32_t rva = findExportRva(
         std::wstring(dllPath.begin(), dllPath.end()), exportName);
     if (rva == 0) {
@@ -240,11 +377,18 @@ bool callRemoteExport(HANDLE process, HMODULE remoteModule, const std::string& d
                 static_cast<unsigned long>(rva),
                 reinterpret_cast<void*>(reinterpret_cast<std::uintptr_t>(remoteModule) + rva));
 
-    const auto remoteEntry = reinterpret_cast<LPTHREAD_START_ROUTINE>(
+    const void* remoteEntryVa = reinterpret_cast<void*>(
         reinterpret_cast<std::uintptr_t>(remoteModule) + rva);
+    if (!describeRemoteEntry(process, remoteEntryVa)) {
+        std::fprintf(stderr, "error: entry page is not executable — refusing the remote "
+                             "call (this IS the diagnosis, no crash needed)\n");
+        return false;
+    }
+
+    const auto remoteEntry = reinterpret_cast<LPTHREAD_START_ROUTINE>(remoteEntryVa);
     bool ok = false;
     HANDLE thread =
-        CreateRemoteThread(process, nullptr, 0, remoteEntry, nullptr, 0, nullptr);
+        CreateRemoteThread(process, nullptr, 0, remoteEntry, remoteParam, 0, nullptr);
     if (thread == nullptr) {
         std::fprintf(stderr, "error: CreateRemoteThread(%s) failed (%lu)\n", exportName,
                      GetLastError());
@@ -265,6 +409,7 @@ int wmain(int argc, wchar_t* argv[]) {
     std::wstring exeArg;
     std::string dllArg = "RenderLift.D3D11.dll";
     std::string callArg = "RenderLiftInstall";
+    std::string paramArg;  // ANSI path staged remotely for --call (e.g. probe)
     DWORD explicitPid = 0;
 
     for (int i = 1; i < argc; ++i) {
@@ -279,6 +424,9 @@ int wmain(int argc, wchar_t* argv[]) {
         } else if (arg == L"--call" && i + 1 < argc) {
             const std::wstring w = argv[++i];
             callArg.assign(w.begin(), w.end());
+        } else if (arg == L"--param" && i + 1 < argc) {
+            const std::wstring w = argv[++i];
+            paramArg.assign(w.begin(), w.end());
         } else if (arg == L"--help" || arg == L"/?") {
             usage();
             return 0;
@@ -306,14 +454,23 @@ int wmain(int argc, wchar_t* argv[]) {
     }
     std::printf("target pid %lu opened\n", pid);
 
+    printMitigationPolicies(process);
+
     HMODULE remoteModule = nullptr;
     int rc = 1;
     if (injectDll(process, std::wstring(dllArg.begin(), dllArg.end()), &remoteModule)) {
         std::printf("%s loaded remotely at 0x%p\n", dllArg.c_str(),
                     static_cast<void*>(remoteModule));
-        if (callRemoteExport(process, remoteModule, dllArg, callArg.c_str())) {
-            std::printf("module armed — observation log is RenderLift.D3D11.log\n");
-            rc = 0;
+        LPVOID remoteParam = writeRemoteParam(process, paramArg);
+        if (paramArg.empty() || remoteParam != nullptr) {
+            if (callRemoteExport(process, remoteModule, dllArg, callArg.c_str(),
+                                 remoteParam)) {
+                std::printf("module armed — observation log is RenderLift.D3D11.log\n");
+                rc = 0;
+            }
+        }
+        if (remoteParam != nullptr) {
+            VirtualFreeEx(process, remoteParam, 0, MEM_RELEASE);
         }
     }
 

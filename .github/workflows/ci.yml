@@ -63,18 +63,20 @@ jobs:
           if (-not (Test-Path ./build/bin/Release/RenderLift.Loader.exe)) { throw "RenderLift.Loader.exe was not produced" }
           Write-Host "RenderLift.D3D11.dll + RenderLift.Loader.exe produced OK"
       - name: EXPORT CONTRACT verification (fails build if missing)
-        # The injection contract (RenderLiftInstall/Uninstall/FrameCount) is
-        # part of the product. Parse the actual PE export table of the final
-        # DLL — never trust source alone. Evidence lands in the lab pack.
+        # The injection contract (RenderLiftInstall/Uninstall/FrameCount) plus
+        # the frontier-diagnostic probe (RenderLiftEntryProbe, v3.2 lab
+        # experiment) is part of the product. Parse the actual PE export
+        # table of the final DLL — never trust source alone. Evidence lands
+        # in the lab pack.
         shell: pwsh
         run: |
           python tools/ci/pe_exports.py ./build/bin/Release/RenderLift.D3D11.dll | Tee-Object -FilePath RenderLift.D3D11.exports.txt
           $log = Get-Content RenderLift.D3D11.exports.txt -Raw
           if ($log -match 'WARNING: C\+\+ name mangling') { throw 'C++ name mangling in exports — extern broken' }
-          foreach ($name in @('RenderLiftInstall','RenderLiftUninstall','RenderLiftFrameCount')) {
+          foreach ($name in @('RenderLiftInstall','RenderLiftUninstall','RenderLiftFrameCount','RenderLiftEntryProbe')) {
               if (-not ($log -match [regex]::Escape($name))) { throw "REQUIRED EXPORT MISSING: $name" }
           }
-          Write-Host "export contract verified (3/3 exports present, no mangling)"
+          Write-Host "export contract verified (4/4 exports present, no mangling)"
       - name: publish lab pack to dist-pack branch
         # The sandbox cannot reach Azure Blob storage (artifact downloads);
         # a plain git branch is the transport mechanism for binários + logs.

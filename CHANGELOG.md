@@ -79,6 +79,18 @@ The engine inside the product — **ALRR Core** — keeps its own version and is
   `CREATE_ALWAYS`, magic `RLENT01`) is written first as a yes/no witness to
   reaching the first observable byte; every line goes to **two sinks**
   (module dir + `%TEMP%`). Exports unchanged; observe-only unchanged.
+- **Frontier isolation experiment (v3.2)**: after the v3.1 retest returned
+  `0xC0000005` with no entry mark AND no log in either sink, the boundary
+  `CreateRemoteThread → remote entry` gets its own instrumented probe:
+  new export `RenderLiftEntryProbe` (absolute-minimum stub — kernel32 IAT
+  only, one read-only literal, the LPVOID param; no CRT/STL/globals/D3D11/
+  MinHook/SEH; writes `RLPROBE1 ok` and always returns `0x12345678`), loader
+  `--param <ansi>` staging, `VirtualQueryEx` validation of the entry page
+  (State/Type/Protect/AllocationBase — aborts the call when non-executable,
+  diagnosis without a crash), and process-mitigation dumping
+  (DEP/ASLR/CFG/ACG/Signature/ImageLoad/ExtensionPoint). Probe works →
+  frontier is healthy, focus returns to `RenderLiftInstall`; probe also
+  dies `0xC0000005` → the failure is in remote-thread delivery itself.
 
 ### Added — 0.2 groundwork (hook engine + D3D11 module)
 - **MinHook 1.3.4 vendored** (`third_party/minhook`, BSD-2) — the D3D backend

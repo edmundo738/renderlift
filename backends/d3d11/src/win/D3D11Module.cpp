@@ -894,6 +894,33 @@ RENDERLIFT_D3D11_API std::uint64_t WINAPI RenderLiftFrameCount(LPVOID /*unused*/
     return s != nullptr ? s->presentCount : 0;
 }
 
+// ── CreateRemoteThread frontier probe (lab experiment, v3.2) ────────────────
+//
+// Answers ONE question: "does a minimal remote thread entry survive at all?"
+// Discipline: absolute minimum dependencies — no CRT (no stdio/printf/
+// malloc), no STL, no writable globals, no D3D11, no MinHook, no SEH. Only:
+//   · the LPVOID parameter (ANSI path written remotely by the loader),
+//   · one read-only literal in .rdata,
+//   · kernel32 imports via the IAT.
+// Behavior: write "RLPROBE1 ok" to %param% (or .\RenderLift.probe if null),
+// ALWAYS return 0x12345678. Two witnesses, two outcomes:
+//   file exists + 0x12345678 → the frontier (remote thread → entry) works;
+//   no file + 0xC0000005     → the failure is in remote-thread DELIVERY,
+//                              before any minimal body — not D3D11/MinHook.
+RENDERLIFT_D3D11_API DWORD WINAPI RenderLiftEntryProbe(LPVOID param) {
+    static const char kMagic[] = "RLPROBE1 ok\r\n";  // .rdata, no init
+    const char* path =
+        (param != nullptr) ? static_cast<const char*>(param) : "RenderLift.probe";
+    const HANDLE h = CreateFileA(path, GENERIC_WRITE, FILE_SHARE_READ, nullptr,
+                                 CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h != INVALID_HANDLE_VALUE) {
+        DWORD wrote = 0;
+        WriteFile(h, kMagic, static_cast<DWORD>(sizeof(kMagic) - 1), &wrote, nullptr);
+        CloseHandle(h);
+    }
+    return 0x12345678ul;
+}
+
 }  // extern "C"
 
 BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
