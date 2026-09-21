@@ -13,8 +13,12 @@
 //                        RSSetViewports(44)        (aggregated per frame)
 //   IDXGISwapChain:      Present(8) · ResizeBuffers(13)
 //
-// Output: "RenderLift.D3D11.log" (RLCAP1 lines) — inspect offline with:
+// Output: "RenderLift.D3D11.log" (RLCAP1 lines, next to this DLL by default)
+//   — inspect offline with:
 //   RenderLift.CLI inspect RenderLift.D3D11.log
+// Entry witness: "RenderLift.entry" (32-byte binary mark, CREATE_ALWAYS at
+//   the top of RenderLiftInstall, kernel32-only — see the v3.1 evidence
+//   transport block below).
 //
 // Env overrides: RENDERLIFT_LOG (path) · RENDERLIFT_OBSERVE_FRAMES (cap).
 // Injection contract: loader LoadLibrary()s the DLL, calls RenderLiftInstall
@@ -100,20 +104,36 @@ using RSSetViewportsFn = void(STDMETHODCALLTYPE*)(ID3D11DeviceContext*, UINT,
 
 // ── Capture log: one mutex, one file, flushed periodically ──────────────────
 
-// ── Earliest-possible, dependency-free observability ─────────────────────────
+// ── Evidence transport v3.1: kernel32-only, entry-SEH-safe ───────────────────
 //
-// First GTA V lab run (2026-09-21): the process died with 0xc0000005 and the
-// WER record showed "fault offset == RenderLiftInstall RVA" — i.e. the crash
-// happened at/around the first executed bytes, BEFORE the buffered logger
-// below ever opened its file (zero log lines survived). Lesson adopted as
-// protocol (ADR 0003): the install contract must produce evidence from its
-// very first instruction, using primitives that cannot themselves fail from
-// uninitialized state: no STL, no globals with dynamic initializers, no
-// locks — fopen/fputs/fclose on a precomputed path.
+// Lab history (GTA V Legacy 1.0.3889.0):
+//   run 2 (v2): 0xc0000005, WER fault offset == RenderLiftInstall entry VA,
+//               zero log bytes — crash before the buffered logger existed.
+//   run 3 (v3): 0xc0000005 again, NO log file at all, no cp=1. Post-mortem:
+//               cp=1 ran OUTSIDE the __try, and its chain was still CRT-heavy
+//               (vsnprintf + fopen_s/fputs/fclose — CRT stdio allocates,
+//               locks, and lazily initializes locale). An AV inside that
+//               chain produces exactly "0xc0000005 + no cp=1 + no file",
+//               so "missing cp=1" proved nothing about pre-DLL failure.
+//
+// v3.1 contract (the whole observable entry now lives INSIDE the SEH guard):
+//   1. EVERY observable step — binary entry mark, cp=1, installSteps — runs
+//      under __try; the filter reports phase + code + ExceptionAddress.
+//   2. The evidence TRANSPORT below touches kernel32 only: CreateFileA/
+//      WriteFile/CloseHandle + PEB env reads. No CRT stdio, no vsnprintf,
+//      no heap, no locks — usable from the very first observable byte and
+//      equally safe inside the SEH filter.
+//   3. A binary entry mark (RenderLift.entry, CREATE_ALWAYS, 32 bytes) is
+//      written FIRST: its mere existence + mtime answers "did execution
+//      reach the first observable byte?" with a yes/no file artifact,
+//      independent of text-log plumbing. Then the cp=1..80 text trail runs
+//      on the same transport.
 //
 // This block deliberately does NOT use the CaptureLog class.
-char gModuleDir[MAX_PATH] = "";    // set by DllMain(ATTACH); "" until then
-volatile LONG gInstallPhase = 0;   // last checkpoint id written (SEH reads it)
+char gModuleDir[MAX_PATH] = "";      // set by DllMain(ATTACH); "" until then
+char gMarkPath[MAX_PATH] = "";       // "<moduleDir>\RenderLift.entry" (DllMain)
+volatile LONG gInstallPhase = 0;     // last checkpoint id written (SEH reads it)
+volatile LONG gInstallAttempts = 0;  // incremented per RenderLiftInstall call
 
 // Evidence path: RENDERLIFT_LOG env, else next to the MODULE (never next to
 // GTA5.exe — the game dir may be read-only; the lab dir is ours).
@@ -128,38 +148,149 @@ bool resolveLogPath(char* out, size_t outSize) {
     return true;
 }
 
-// One line out, holding nothing. Falls back to %TEMP% so permission quirks
-// cannot silently eat the only evidence we have.
+// ── kernel32-only primitives (no CRT anywhere below) ────────────────────────
+
+DWORD strLen(const char* s) {
+    DWORD n = 0;
+    while (s[n] != '\0') ++n;
+    return n;
+}
+
+// Append bytes to a file; silent no-op on failure (evidence is best-effort,
+// never fatal). CreateFileA/WriteFile/CloseHandle only.
+void k32Append(const char* path, const char* data, DWORD len) {
+    const HANDLE h = CreateFileA(path, GENERIC_WRITE, FILE_SHARE_READ, nullptr,
+                                 OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return;
+    SetFilePointer(h, 0, nullptr, FILE_END);
+    DWORD wrote = 0;
+    WriteFile(h, data, len, &wrote, nullptr);
+    CloseHandle(h);
+}
+
+void k32Overwrite(const char* path, const void* data, DWORD len) {
+    const HANDLE h = CreateFileA(path, GENERIC_WRITE, FILE_SHARE_READ, nullptr,
+                                 CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return;
+    DWORD wrote = 0;
+    WriteFile(h, data, len, &wrote, nullptr);
+    CloseHandle(h);
+}
+
+// "%TEMP%\<name>" for the fallback evidence copy (PEB env, kernel32 only).
+bool tempPath(char* out, size_t outSize, const char* name) {
+    char dir[MAX_PATH] = "";
+    const DWORD n = GetEnvironmentVariableA("TEMP", dir, sizeof dir);
+    if (n == 0 || n >= sizeof dir) return false;
+    std::snprintf(out, outSize, "%s\\%s", dir, name);
+    return true;
+}
+
+// One log line, kernel32-only, primary path then %TEMP% fallback.
 void earlyLogRaw(const char* line) {
+    DWORD len = strLen(line);
     char primary[MAX_PATH];
     resolveLogPath(primary, sizeof primary);
-    FILE* f = nullptr;
-    if (fopen_s(&f, primary, "a") == 0 && f != nullptr) {
-        fputs(line, f);
-        fputc('\n', f);
-        fclose(f);
-        return;
+    k32Append(primary, line, len);
+    k32Append(primary, "\n", 1);
+    // Duplicate into %TEMP% so a primary ACL/silence problem can never eat
+    // the only evidence: two sinks, one of them user-writable by design.
+    char fallback[MAX_PATH];
+    if (tempPath(fallback, sizeof fallback, "RenderLift.D3D11.log")) {
+        k32Append(fallback, line, len);
+        k32Append(fallback, "\n", 1);
     }
-    char temp[MAX_PATH] = "";
-    const DWORD n = GetEnvironmentVariableA("TEMP", temp, sizeof temp);
-    if (n > 0 && n < sizeof temp) {
-        char fallback[MAX_PATH];
-        std::snprintf(fallback, sizeof fallback, "%s\\RenderLift.D3D11.log", temp);
-        if (fopen_s(&f, fallback, "a") == 0 && f != nullptr) {
-            fputs(line, f);
-            fputc('\n', f);
-            fclose(f);
-        }
+}
+
+// ── CRT-free formatting (hand-rolled: %s %c %% %d %i %u %ld %lu %zu %x %08lx %p) ──
+void fmtStr(char*& w, const char* end, const char* s) {
+    if (s == nullptr) s = "(null)";
+    while (*s != '\0' && w < end - 1) *w++ = *s++;
+}
+void fmtU64(char*& w, const char* end, unsigned long long v, unsigned base,
+            int width, char pad) {
+    char tmp[32];
+    int n = 0;
+    do {
+        tmp[n++] = "0123456789abcdef"[v % base];
+        v /= base;
+    } while (v != 0 && n < 32);
+    while (width-- > n && w < end - 1) *w++ = pad;
+    while (n > 0 && w < end - 1) *w++ = tmp[--n];
+}
+void fmtI64(char*& w, const char* end, long long v) {
+    if (v < 0) {
+        if (w < end - 1) *w++ = '-';
+        fmtU64(w, end, static_cast<unsigned long long>(-v), 10, 0, ' ');
+    } else {
+        fmtU64(w, end, static_cast<unsigned long long>(v), 10, 0, ' ');
     }
 }
 
 void earlyLogf(const char* fmt, ...) {
     char buf[512];
+    char* w = buf;
+    const char* end = buf + sizeof buf;
     va_list args;
     va_start(args, fmt);
-    std::vsnprintf(buf, sizeof buf, fmt, args);
+    for (const char* p = fmt; *p != '\0' && w < end - 1; ++p) {
+        if (*p != '%') {
+            *w++ = *p;
+            continue;
+        }
+        ++p;
+        if (*p == '%') {
+            *w++ = '%';
+            continue;
+        }
+        char pad = ' ';
+        int width = 0;
+        if (*p == '0') {
+            pad = '0';
+            ++p;
+        }
+        while (*p >= '0' && *p <= '9') {
+            width = width * 10 + (*p - '0');
+            ++p;
+        }
+        char len = '\0';
+        if (*p == 'l' || *p == 'z') len = *p++;
+        switch (*p) {
+        case 's':
+            fmtStr(w, end, va_arg(args, const char*));
+            break;
+        case 'c':
+            if (w < end - 1) *w++ = static_cast<char>(va_arg(args, int));
+            break;
+        case 'd':
+        case 'i':
+            if (len == 'l') fmtI64(w, end, va_arg(args, long));
+            else fmtI64(w, end, va_arg(args, int));
+            break;
+        case 'u':
+            if (len == 'l') fmtU64(w, end, va_arg(args, unsigned long), 10, width, pad);
+            else if (len == 'z') fmtU64(w, end, va_arg(args, size_t), 10, width, pad);
+            else fmtU64(w, end, va_arg(args, unsigned), 10, width, pad);
+            break;
+        case 'x':
+            fmtU64(w, end, (len == 'l') ? va_arg(args, unsigned long) : va_arg(args, unsigned),
+                   16, width, pad);
+            break;
+        case 'p': {
+            fmtStr(w, end, "0x");
+            const uintptr_t v = reinterpret_cast<uintptr_t>(va_arg(args, void*));
+            fmtU64(w, end, static_cast<unsigned long long>(v), 16, 16, '0');
+            break;
+        }
+        default:
+            if (w < end - 1) *w++ = '%';
+            if (*p != '\0' && w < end - 1) *w++ = *p;
+            break;
+        }
+        if (*p == '\0') break;
+    }
     va_end(args);
-    buf[sizeof buf - 1] = '\0';
+    *w = '\0';
     earlyLogRaw(buf);
 }
 
@@ -168,6 +299,37 @@ void earlyLogf(const char* fmt, ...) {
 void setPhase(LONG phase) {
     InterlockedExchange(&gInstallPhase, phase);
     earlyLogf("RLCAP1 install cp=%ld", phase);
+}
+
+// Binary entry witness: 32 bytes, CREATE_ALWAYS — the file's existence +
+// mtime proves the entry code executed, even if every later line is lost.
+struct EntryMark {
+    char magic[8];      // "RLENT01"
+    DWORD pid;
+    DWORD tid;
+    DWORD tick;         // GetTickCount at entry
+    LONG installAttempt;
+    LONG reserved;
+    BYTE pad[8];
+};
+
+void writeEntryMark() {
+    EntryMark m{};
+    m.magic[0] = 'R'; m.magic[1] = 'L'; m.magic[2] = 'E'; m.magic[3] = 'N';
+    m.magic[4] = 'T'; m.magic[5] = '0'; m.magic[6] = '1'; m.magic[7] = '\0';
+    m.pid = GetCurrentProcessId();
+    m.tid = GetCurrentThreadId();
+    m.tick = GetTickCount();
+    m.installAttempt = InterlockedIncrement(&gInstallAttempts);
+    m.reserved = 0;
+    if (gMarkPath[0] != '\0') {
+        k32Overwrite(gMarkPath, &m, sizeof m);
+        return;
+    }
+    char fallback[MAX_PATH];
+    if (tempPath(fallback, sizeof fallback, "RenderLift.entry")) {
+        k32Overwrite(fallback, &m, sizeof m);
+    }
 }
 
 class CaptureLog {
@@ -534,9 +696,12 @@ HRESULT STDMETHODCALLTYPE ResizeBuffers_Hook(IDXGISwapChain* swapchain, UINT buf
 //                 exception record is written to the log by the SEH filter.
 //
 // Checkpoint ids (gInstallPhase / "RLCAP1 install cp=N"):
+//   mark binary entry witness (RenderLift.entry) → "RLCAP1 entered" →
 //   1 entered  · 2 state block · 3 log open · 4 hook engine
 //   5 vtables  · 50..56 probe sub-steps · 60+i per-hook · 70 enableAll
 //   80 armed
+// All of them — including the mark and cp=1 — run INSIDE the entry __try,
+// on the CRT-free kernel32 transport (v3.1 protocol).
 
 constexpr HRESULT RL_E_STATE_ALLOC = static_cast<HRESULT>(0x8000A001UL);
 constexpr HRESULT RL_E_LOG_OPEN = static_cast<HRESULT>(0x8000A002UL);
@@ -693,11 +858,20 @@ HRESULT uninstallSteps() {
 extern "C" {
 
 RENDERLIFT_D3D11_API HRESULT WINAPI RenderLiftInstall(LPVOID /*unused*/) {
-    // Proof of life BEFORE anything else: no STL, no allocator, no globals.
-    rl::backend::setPhase(1);
-
+    // v3.1: the ENTIRE observable entry lives inside the SEH guard — the
+    // binary entry mark, cp=1 and every later step. An AV anywhere (even in
+    // the evidence path itself) is caught by the filter and reported with
+    // phase + ExceptionAddress + a coded HRESULT.
     HRESULT hr = E_UNEXPECTED;
     __try {
+        // 1) Binary witness FIRST — kernel32 only: if this file exists, the
+        //    entry reached the first observable byte. Answers the retest
+        //    question without any dependence on text-log plumbing.
+        rl::backend::writeEntryMark();
+        // 2) First text evidence + checkpoint 1 on the same k32 transport.
+        rl::backend::earlyLogRaw("RLCAP1 entered proto=k32mark");
+        rl::backend::setPhase(1);
+        // 3) Armed install path (checkpoints 2..80 inside, each on k32).
         hr = rl::backend::installSteps();
     } __except (rl::backend::sehFilter(GetExceptionInformation(), &hr)) {
         // Evidence written by the filter; hr carries phase + exception code.
@@ -734,6 +908,12 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
             if (last != nullptr) *last = L'\0';
             WideCharToMultiByte(CP_ACP, 0, wpath, -1, rl::backend::gModuleDir,
                                 MAX_PATH, nullptr, nullptr);
+            // Precompute the binary entry-mark path so the very first
+            // observable byte needs zero path work.
+            if (rl::backend::gModuleDir[0] != '\0') {
+                std::snprintf(rl::backend::gMarkPath, MAX_PATH,
+                              "%s\\RenderLift.entry", rl::backend::gModuleDir);
+            }
         }
     } else if (reason == DLL_PROCESS_DETACH) {
         rl::backend::ModuleState* s = rl::backend::gState;

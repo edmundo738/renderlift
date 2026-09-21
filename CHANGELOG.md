@@ -69,6 +69,16 @@ The engine inside the product — **ALRR Core** — keeps its own version and is
 - **CI dist-pack publish** is now additive (clone + refresh) instead of a
   force-pushed orphan branch, so manually published lab zips/notes survive
   subsequent runs.
+- **v3 retest lesson → install evidence protocol v3.1**: cp=1 ran outside
+  the entry `__try` and its chain was still CRT-heavy (`vsnprintf` +
+  `fopen_s`/`fputs`/`fclose`), so a crash there was indistinguishable from a
+  pre-DLL failure. The whole observable entry now runs inside the SEH
+  guard on a **kernel32-only transport** (`CreateFileA`/`WriteFile`, hand-
+  rolled formatter — zero CRT stdio/heap/locks, same path used by the SEH
+  filter); a **binary entry mark** (`RenderLift.entry`, 32 bytes,
+  `CREATE_ALWAYS`, magic `RLENT01`) is written first as a yes/no witness to
+  reaching the first observable byte; every line goes to **two sinks**
+  (module dir + `%TEMP%`). Exports unchanged; observe-only unchanged.
 
 ### Added — 0.2 groundwork (hook engine + D3D11 module)
 - **MinHook 1.3.4 vendored** (`third_party/minhook`, BSD-2) — the D3D backend

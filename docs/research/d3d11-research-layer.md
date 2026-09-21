@@ -141,11 +141,34 @@ contrato de retorno funcionou).
   Diagnóstico, não mascaramento: sucesso continua a significar 9 hooks
   armados.
 
-**Leitura do próximo teste:** log até `cp=80` → armado; último `cp=N` +
-linha `seh` → passo e endereço exatos da falha; nem `cp=1` → falha na
-entrega da thread remota (fora do nosso init), move seguinte: stub de
-thread mínimo/injeção alternativa. Binários do lab: branch `dist-pack`
-(pack v3, build CI `35652290417`).
+**Run 3 (v3) — mesmo resultado, e a lição de protocolo que ela ensina.**
+`remote RenderLiftInstall returned 0xc0000005`, **nenhum log criado, nenhum
+`cp=1`**. Revisão crítica do próprio protocolo: (a) `cp=1` corria **fora**
+do `__try`, e (b) a sua cadeia ainda era CRT-pesada (`vsnprintf` +
+`fopen_s`/`fputs`/`fclose` — stdio aloca, bloqueia e inicializa locale).
+Um AV dentro dessa cadeia produz *exatamente* "0xc0000005 sem cp=1 e sem
+ficheiro" — ou seja, "cp=1 ausente" **não** provava falha pré-DLL. Protocolo
+corrigido (v3.1):
+
+- **toda a entrada observável dentro do SEH** — marca, `cp=1`, `installSteps`;
+- **transporte de evidência kernel32-only**: `CreateFileA`/`WriteFile`/
+  `CloseHandle` + leitura de env no PEB; zero CRT stdio, zero heap, zero
+  locks — formatador de strings próprio (`%d/%u/%ld/%lu/%zu/%x/%p/%s`);
+- **marca binária de entrada primeiro**: `RenderLift.entry` (32 bytes,
+  `CREATE_ALWAYS`, magic `RLENT01`, pid/tid/tick/nº da tentativa) — a sua
+  existência+mtime responde binariamente a "a execução chegou ao primeiro
+  byte observável?", independentemente de texto;
+- **dual-sink**: cada linha vai para a pasta da DLL *e* para `%TEMP%`
+  (duas cópias — uma ACL problemática nunca mais fica com a única prova);
+- exports inalterados: `HRESULT WINAPI fn(LPVOID)`, mesmos 3 nomes;
+  OBSERVE-only, zero steering.
+
+Leitura do **próximo** teste (v3.1): existe `RenderLift.entry` ao lado da
+DLL ou em `%TEMP%` → entry alcançado, e o último `cp=N` / linha `seh`
+(qualquer dos dois sinks) dá o passo+endereço exatos; **não** existe marca
+em nenhum sink e o devolvido é `0xc0000005` → a falha está na *entrega* da
+thread remota (stack prologue/anti-tamper/EDR), move seguinte: stub de
+thread mínimo / forma de injeção alternativa.
 
 ## 6. Roadmap da camada
 
