@@ -1,126 +1,89 @@
 ═══════════════════════════════════════════════════════════════════════════
- RenderLift 0.2 — PACOTE DE LABORATÓRIO v3.1 (Windows x64) · MODO OBSERVE
+ RenderLift 0.2 — PACOTE DE LABORATÓRIO v3.2 (Windows x64) · MODO OBSERVE
  Render less. Reconstruct more. · eduardo × Arena · 2026-09-21
- build: commit 93441bf · CI run 35661505946 (MSVC, 0 erros, 67/67 testes)
+ EXPERIMENTO DA FRONTEIRA (CreateRemoteThread → remote entry)
+ build: commits 33ca350(+fixes) · CI run 35667648232 (MSVC, 0 erros, 67/67)
 ═══════════════════════════════════════════════════════════════════════════
 
-★ O QUE MUDOU NESTA v3.1 (resposta ao teu relatório do reteste da v3)
-  Tinhas razão no diagnóstico de protocolo: na v3 o cp=1 corria FORA do
-  SEH e a sua cadeia ainda era CRT (vsnprintf + fopen_s/fputs/fclose — que
-  alocam, bloqueiam e inicializam locale). Um crash aí dentro produzia
-  exatamente "0xC0000005 sem cp=1 e sem log" — não provava nada.
-  Na v3.1:
-  • TODA a entrada observável (marca, cp=1, installSteps) corre DENTRO do
-    SEH — qualquer AV, mesmo dentro do próprio código de log, é registada
-    com fase + código + ExceptionAddress exato + HRESULT codificado;
-  • o transporte de evidência é 100% kernel32 (CreateFileA/WriteFile), com
-    formatador próprio — zero CRT stdio, zero heap, zero locks;
-  • NOVO: RenderLift.entry — marca BINÁRIA de 32 bytes (magic RLENT01,
-    pid/tid/hora/tentativa) escrita em CREATE_ALWAYS como PRIMEIRO ato.
-    Se o ficheiro existe, a execução chegou ao primeiro byte observável —
-    resposta binária, sem depender de texto;
-  • cada linha sai em DOIS sinks: pasta da DLL E %TEMP% — uma ACL má já
-    não fica com a única prova;
-  • exports inalterados; OBSERVE-only; nada toca no rendering.
+★ PORQUE ESTA v3.2
+  A v3.1 respondeu com duplo negativo: 0xC0000005, sem RenderLift.entry e
+  sem log em NENHUM dos sinks. Prova restrita: nenhuma evidência sobreviveu.
+  Antes de mais suposições, isolamos a fronteira com um STUB MÍNIMO:
+  • RenderLiftEntryProbe — novo export na DLL: sem CRT, sem STL, sem
+    globais, sem D3D11, sem MinHook, sem SEH. Só kernel32 + um literal
+    read-only + o path passado por parâmetro. Escreve "RLPROBE1 ok" e
+    retorna SEMPRE 0x12345678;
+  • o Loader NEW valida a página do entry com VirtualQueryEx ANTES de
+    chamar (State/Type/Protect/AllocationBase — aborta se não executável,
+    diagnóstico SEM crash) e despeja as MITIGAÇÕES do processo
+    (DEP/ASLR/CFG/ACG/Signature/ImageLoad/ExtensionPoint).
 
-CONTEÚDO
-  RenderLift.D3D11.dll    módulo de observação D3D11 (Research Layer)
-  RenderLift.Loader.exe   injetor para o processo do jogo
-  RenderLift.CLI.exe      inspector offline do capture (RLCAP1)
-  profiles/               perfis de jogo (GTA V = modo observe, 600 frames)
+══════════════════════════════════ O EXPERIMENTO (faz ISTO primeiro) ─
+  Com GTA5.exe vivo no Modo História, em C:\RenderLift-lab\:
+
+    RenderLift.Loader.exe --exe GTA5.exe --dll RenderLift.D3D11.dll ^
+      --call RenderLiftEntryProbe --param "C:\RenderLift-lab\RenderLift.probe"
+
+  (numa linha só, se não usares o ^ do cmd)
+
+  SAÍDA ESPERADA — o Loader agora imprime TUDO:
+    target pid NNNN opened
+    mitig DEP: ... / ASLR: ... / CFG: ... / ACG: ... / SIGN: ... / IMGLOAD: ...
+    C:\RenderLift-lab\RenderLift.D3D11.dll loaded remotely at 0x...
+    param staged remotely at 0x... ("C:\RenderLift-lab\RenderLift.probe", 39 bytes)
+    export RenderLiftEntryProbe at RVA=0x00005ed0, remote VA=0x...
+    entry page: base=0x... region=0x... state=COMMIT type=IMAGE
+                protect=EXECUTE_READ(0x20) allocBase=0x... => EXECUTABLE
+    remote RenderLiftEntryProbe returned 0x12345678
+
+  E deve aparecer um ficheiro novo:
+    C:\RenderLift-lab\RenderLift.probe     (conteúdo: "RLPROBE1 ok")
+
+════════════════════════════════════════ LEITURA DO RESULTADO ─
+  CASO 1 — ficheiro .probe existe + retorno 0x12345678:
+    A fronteira CreateRemoteThread → remote entry está SÃ nesse processo.
+    O foco volta para a entrada de RenderLiftInstall (o que muda em relação
+    ao stub: frame maior, /GS, SEH table entries, mais IAT calls).
+  CASO 2 — "entry page: ... => NOT EXECUTABLE":
+    O Loader ABORTA antes de chamar — a página do export não é executável
+    no processo alvo (DEP/mapeamento anómalo). Manda a linha toda: isso é
+    o diagnóstico completo, sem crash.
+  CASO 3 — retorno 0xC0000005 SEM ficheiro .probe:
+    Nem o corpo mínimo de 3 calls kernel32 sobrevive → a falha é de
+    ENTREGA da thread remota (stack/anti-tamper/EDR do processo). NÃO
+    voltamos a D3D11/MinHook; o próximo passo passa a ser uma via de
+    injeção diferente (e.g. APC/loader-aware/shim), decidida com ESTES
+    dados na mão.
+
+  EM QUALQUER CASO manda-me: a saída COMPLETA do Loader (com as linhas
+  mitig + entry page) e diz se o RenderLift.probe apareceu.
+
+══════════════════════════════ SE CORRER BEM: o teste normal ─
+  Depois do probe (e só se o CASO 1 se confirmar), o fluxo normal:
+    RenderLift.Loader.exe --exe GTA5.exe --dll RenderLift.D3D11.dll
+  (valida a página do entry antes, imprime idem) → "module armed" → joga
+  ~20 s (600 frames) → log em C:\RenderLift-lab\RenderLift.D3D11.log +
+  espelho em %TEMP% + RenderLift.entry (marca binária de entrada).
+  Análise offline:
+    RenderLift.CLI.exe inspect "C:\RenderLift-lab\RenderLift.D3D11.log"
+
+──────────────────────── PASSO 0 — MARK OF THE WEB ─
+  Unblock no zip (Propriedades → Desbloquear) antes de extrair, ou:
+    Get-ChildItem "C:\RenderLift-lab" -Recurse | Unblock-File
+  ⚠️ O Loader v3.2 é binário NOVO (36 864 bytes): apaga o antigo, extrai
+  tudo de novo. Mantém a tua exclusão do Defender para C:\RenderLift-lab.
 
 ⚠️ REGRAS DE SEGURANÇA (invioláveis)
-  • APENAS Modo História (single player). NUNCA em GTA Online — loaders e
-    hooks colidem com anti-cheat; o RenderLift é explicitamente fora de
-    online (ver SECURITY.md no projeto).
-  • Testa apenas na TUA máquina e na TUA cópia do jogo.
-  • Visual C++ Redistributable 2015-2022 (x64): https://aka.ms/vs/17/release/vc_redist.x64.exe
-
-──────────────────────── PASSO 0 — MARK OF THE WEB (arquivos baixados) ───
-  A) Clica-direito no .zip → Propriedades → marca "Desbloquear" → OK, e só
-     depois extrai ("Extrair tudo"); ou B) depois de extrair, em PowerShell:
-     Get-ChildItem "C:\RenderLift-lab" -Recurse | Unblock-File
-  (SmartScreen: "Mais informações" → "Executar assim mesmo" — build de CI
-  não assinado; o código fonte completo está no repo.)
-
-──────────────────────────────────────────────── PRÉ-REQUISITOS NO JOGO ─
-  1. Definições → Gráficos → DirectX Version: DirectX 11 (obrigatório).
-  2. Zonas com variedade: cidade + noite + chuva + interior/garagem.
-
-═════════════════════════════════════════════════════ COMO TESTAR ─
-  PASSO 1 — Extrai este zip para C:\RenderLift-lab\ (apaga o build antigo).
-
-  PASSO 2 — (Opcional) $env:RENDERLIFT_LOG / $env:RENDERLIFT_OBSERVE_FRAMES
-    num PowerShell, e lança o jogo DESSE terminal (PlayGTAV.exe).
-    Sem envs, o log sai em C:\RenderLift-lab\RenderLift.D3D11.log
-    (e agora também em %TEMP%\RenderLift.D3D11.log — cópia espelho).
-
-  PASSO 3 — Entra no Modo História, espera o mundo carregar.
-
-  PASSO 4 — Noutro terminal em C:\RenderLift-lab\:
-      RenderLift.Loader.exe --exe GTA5.exe --dll RenderLift.D3D11.dll
-    Esperado (RVAs do build v3.1):
-      target pid NNNN opened
-      RenderLift.D3D11.dll loaded remotely at 0x...
-      export RenderLiftInstall at RVA=0x00005ef0, remote VA=0x...
-      remote RenderLiftInstall returned 0x00000000
-      module armed — observation log is RenderLift.D3D11.log
-
-  PASSO 5 — Joga 1–5 min. No cap ("RLCAP1 cap") a DLL desliga-se sozinha.
-    Sem efeitos visuais: observe não toca no rendering.
-
-  PASSO 6 — Análise offline:
-      RenderLift.CLI.exe inspect "C:\RenderLift-lab\RenderLift.D3D11.log"
-
-  PASSO 7 — Manda-me: (a) o(s) log(s); (b) saída do inspect; (c) FPS 60s.
-
-═══════════════ COMO LER A EVIDÊNCIA (protocolo v3.1 — matriz fechada) ─
-  Procura estes artefactos DEPOIS de correr o Loader (em qualquer cenário):
-    M1  C:\RenderLift-lab\RenderLift.entry     ← marca binária de entrada
-    M2  %TEMP%\RenderLift.entry                ← fallback da marca
-    L1  C:\RenderLift-lab\RenderLift.D3D11.log ← trilho de texto cp=N
-    L2  %TEMP%\RenderLift.D3D11.log            ← espelho do trilho
-
-  Leitura:
-    A) Existe M1 ou M2 → a execução chegou ao primeiro byte observável.
-       Liga o Loader ao horário da marca (mtime + campo tentativa dentro).
-       Depois lê L1/L2:
-         • até "cp=80" + "RLCAP1 armed hooks=9 mode=observe" → instalação
-           completa; joga e manda o capture;
-         • último "cp=N" e/ou linha "RLCAP1 seh phase=… code=0x… addr=0x…"
-           → o passo exato e o endereço da falha. Diagnóstico fechado.
-    B) NÃO existe marca em NENHUM sink (M1 nem M2) e o Loader devolve
-       0xC0000005 → a falha está ANTES do nosso código observável (entrega
-       da thread remota: stack/anti-tamper/EDR). Neste caso manda-me o
-       resultado tal qual — o próximo passo já está planeado (stub de
-       thread mínimo / via de injeção alternativa), e este resultado é a
-       prova que o justifica.
-    C) Loader devolve código normal sem crash (0x8000A0xx / 0xE?xxxxxx):
-       0x00000000 sucesso armado · 0x8000A001 estado · 0x8000A002 log ·
-       0x8000A003 MinHook · 0x8000A010 vtables · 0x8000A02i hook i ·
-       0x8000A030 enable · 0xE?xxxxxx exceção (? = fase, código Windows).
-
-  Checkpoints (L1/L2): cp=1 entrou · 2 estado · 3 log · 4 MinHook ·
-    5 + 50..55 vtables (janela/probe HW/WARP/leitura) · 60..68 hooks ·
-    70 enable · 80 ARMED.
-
-═══════════════════════════════════════════════ PROBLEMAS TÍPICOS ─
-  "OpenProcess failed (5)" — terminal como Administrador; fecha overlays
-    hook-ativos (RTSS/Discord/NVIDIA overlay).
-  "export 'RenderLiftInstall' not found" — build ANTERIOR: apaga tudo e
-    extrai este pacote (Unblock-File!).
-  Pasta lab sem escrita? A marca sai em %TEMP% (M2/L2) à mesma — procura lá.
+  • APENAS Modo História. NUNCA GTA Online (anti-cheat).
+  • Só na TUA máquina, na TUA cópia do jogo.
+  • VC++ Redist 2015-2022 x64: https://aka.ms/vs/17/release/vc_redist.x64.exe
 
 ────────────────────────────────────────────── O QUE ESTÁ DENTRO ─
-  vtable anchors · MinHook detours: device CreateTexture2D/RTV/DSV, context
-  Draw/DrawIndexed (só contadores), OMSetRenderTargets, RSSetViewports,
-  swapchain Present/ResizeBuffers. NADA altera o rendering — observe-first
-  é lei do projeto (ADR 0003). Formato RLCAP1 e histórico das corridas:
-  docs/research/d3d11-research-layer.md (§5.1).
-
-  Build: Windows CI (MSVC) run 35661505946, 0 erros, 67/67 testes verdes,
-  exports PE verificados no build (RenderLift.D3D11.exports.txt anexo):
-    [1] RenderLiftFrameCount  RVA=0x00005ed0
-    [2] RenderLiftInstall     RVA=0x00005ef0
-    [3] RenderLiftUninstall   RVA=0x00006100
+  Build: Windows CI (MSVC) run 35667648232 · 0 erros · 67/67 testes.
+  DLL: export contract 4/4 verificado no build e em evidência anexa:
+    [1] RenderLiftEntryProbe   RVA=0x00005ed0   (novo — stub da fronteira)
+    [2] RenderLiftFrameCount   RVA=0x00005f60
+    [3] RenderLiftInstall      RVA=0x00005f80
+    [4] RenderLiftUninstall    RVA=0x00006190
+  Protocolo completo das corridas: docs/research/d3d11-research-layer.md
 ═══════════════════════════════════════════════════════════════════════════
