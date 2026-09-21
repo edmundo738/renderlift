@@ -1,0 +1,9 @@
+{
+  "schema": "renderlift.hardware-profile/1",
+  "id": "intel-uhd-620",
+  "vendor": "Intel",
+  "gpu": "UHD Graphics 620",
+  "class": "integrated",
+  "priority": "first-class-lab-target",
+  "notes": "Validate fixed-resolution reconstruction before dynamic scaling."
+}
