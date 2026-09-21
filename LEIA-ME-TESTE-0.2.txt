@@ -1,0 +1,142 @@
+═══════════════════════════════════════════════════════════════════════════
+ RenderLift 0.2 — PACOTE DE LABORATÓRIO v3 (Windows x64) · MODO OBSERVE
+ Render less. Reconstruct more. · eduardo × Arena · 2026-09-21
+ build: commit 8cbb7cb · CI run 35652290417 (MSVC, 0 erros, 67/67 testes)
+═══════════════════════════════════════════════════════════════════════════
+
+★ O QUE MUDOU NESTA v3 (resposta ao crash 0xc0000005 do teste anterior)
+  A instalação no processo remoto foi reescrita para ser "evidence-first":
+  • RenderLiftInstall/Uninstall/FrameCount têm agora a forma EXATA de uma
+    thread do Windows (HRESULT WINAPI fn(LPVOID)) — a chamada remota do
+    Loader é ABI-perfeita, não apenas compatível;
+  • o módulo escreve checkpoints no log a partir da PRIMEIRA instrução,
+    sem depender de STL/globals/locks ("RLCAP1 install cp=1,2,3,…");
+  • o log sai AO LADO DA DLL por omissão (C:\RenderLift-lab\) — nunca na
+    pasta do jogo; se nem aí der, cai para %TEMP%;
+  • qualquer exceção é registada com fase + código + endereço exato
+    ("RLCAP1 seh phase=… code=0x… addr=0x…") e devolvida como código;
+  • falhas normais devolvem códigos distintos por passo (ver tabela abaixo).
+
+CONTEÚDO
+  RenderLift.D3D11.dll    módulo de observação D3D11 (Research Layer)
+  RenderLift.Loader.exe   injetor para o processo do jogo
+  RenderLift.CLI.exe      inspector offline do capture (RLCAP1)
+  profiles/               perfis de jogo (GTA V = modo observe, 600 frames)
+
+⚠️ REGRAS DE SEGURANÇA (invioláveis)
+  • APENAS Modo História (single player). NUNCA em GTA Online — loaders e
+    hooks colidem com anti-cheat; o RenderLift é explicitamente fora de
+    online (ver SECURITY.md no projeto).
+  • Testa apenas na TUA máquina e na TUA cópia do jogo.
+  • Precisas do Visual C++ Redistributable 2015-2022 (x64). Quase certamente
+    já está instalado; se aparecer "MSVCP140.dll em falta":
+    https://aka.ms/vs/17/release/vc_redist.x64.exe
+
+──────────────────────── PASSO 0 — MARK OF THE WEB (arquivos baixados) ───
+  Ficheiros baixados da internet recebem a marca de segurança do Windows
+  ("Zone.Identifier"). Sem desbloquear podes ver:
+    • SmartScreen: "O Windows protegeu o seu PC" ao correr o Loader;
+    • bloqueios silenciosos carregando a DLL no GTA V;
+    • erros de acesso ao escrever o ficheiro de log.
+  Solução (qualquer uma):
+    A) Clica-direito no .zip → Propriedades → marca "Desbloquear" → OK,
+       e só depois extrai (extrai com "Extrair tudo", NÃO corre EXEs
+       de dentro da janela do zip);
+    B) Depois de extrair, em PowerShell:
+       Get-ChildItem "C:\RenderLift-lab" -Recurse | Unblock-File
+    C) Se SmartScreen ainda aparecer no Loader: "Mais informações" →
+       "Executar assim mesmo" (o binário não é assinado — é build de CI;
+       o código fonte completo está no repo para conferência).
+
+──────────────────────────────────────────────── PRÉ-REQUISITOS NO JOGO ─
+  1. Definições → Gráficos → DirectX Version: DirectX 11 (obrigatório).
+  2. Janela ou fullscreen, tanto faz (a janela/resize é observado).
+  3. Escolhe zonas com variedade: cidade + noite + chuva + interior/garagem.
+
+═════════════════════════════════════════════════════ COMO TESTAR ─
+  PASSO 1 — Extrai este zip para uma pasta, ex.: C:\RenderLift-lab\
+
+  PASSO 2 — (Opcional) Personaliza o log. Por omissão TODO o log sai em
+      C:\RenderLift-lab\RenderLift.D3D11.log   ← ao lado da DLL, sempre.
+    Para outro caminho: abre PowerShell, define
+      $env:RENDERLIFT_LOG = "C:\RenderLift-lab\gtav-frame.log"
+      (opcional) $env:RENDERLIFT_OBSERVE_FRAMES = "2000"
+    e lança o GTA V **a partir deste mesmo terminal**.
+      Nota: 600 frames a ~30 fps ≈ 20 segundos. Sobe para 2000-3000 se
+      quiseres explorar vários ambientes antes do auto-shutdown.
+
+  PASSO 3 — Entra no Modo História, espera o mundo carregar (ver a cidade).
+
+  PASSO 4 — Abre OUTRO terminal em C:\RenderLift-lab\ e corre:
+      RenderLift.Loader.exe --exe GTA5.exe --dll RenderLift.D3D11.dll
+      Esperado (RVAs do build v3):
+        target pid NNNN opened
+        RenderLift.D3D11.dll loaded remotely at 0x...
+        export RenderLiftInstall at RVA=0x00005670, remote VA=0x...
+        remote RenderLiftInstall returned 0x00000000
+        module armed — observation log is RenderLift.D3D11.log
+
+  PASSO 5 — Joga 1–5 minutos. No frame cap, a DLL desliga-se sozinha (linha
+    "RLCAP1 cap"; overhead cai para ~zero). Podes continuar a jogar.
+    Sem efeitos visuais: modo observe não toca no rendering.
+
+  PASSO 6 — (Opcional) Re-injeta para mais captures, ou fecha o jogo.
+
+  PASSO 7 — Análise offline (no teu PC):
+      RenderLift.CLI.exe inspect "C:\RenderLift-lab\RenderLift.D3D11.log"
+    Confirma:
+      display estimate = a tua resolução? existem hdr-scene / g-buffer /
+      depth / shadow / backbuffer-like coerentes?
+
+  PASSO 8 — Manda-me: (a) o ficheiro .log; (b) a saída do inspect;
+      (c) FPS antes/durante (FRAPS/overlay) por 60s.
+
+═══════════════════ SE FALHAR: COMO LER A EVIDÊNCIA (novo na v3) ─
+  O log conta a história completa da instalação, checkpoint a checkpoint:
+    RLCAP1 install cp=1   entrou no RenderLiftInstall
+    RLCAP1 install cp=2   bloco de estado construído
+    RLCAP1 install cp=3   log aberto
+    RLCAP1 install cp=4   motor de hooks (MinHook) inicializado
+    RLCAP1 install cp=5   a resolver vtables (probe D3D11)
+      cp=50..55  sub-passos: register-class, create-window, probe HW/WARP,
+                 leitura das vtables, cleanup
+    RLCAP1 install cp=60..68  cada um dos 9 hooks instalado
+    RLCAP1 install cp=70  enableAll
+    RLCAP1 install cp=80  ARMED — a partir daqui é só observação
+
+  → O ÚLTIMO cp visível diz exatamente onde parou. Manda-me o log mesmo
+    (sobretudo!) se o jogo crashar: a última linha é o diagnóstico.
+    Se não aparecer NENHUM cp=1: o problema está antes da nossa DLL
+    (loader/AV/permissões) — também me diz.
+
+  Código devolvido pelo Loader ("remote RenderLiftInstall returned 0x…"):
+    0x00000000   sucesso, módulo armado
+    0x8000A001   falha a alocar estado        0x8000A010  vtables falharam
+    0x8000A002   log não abriu                0x8000A02i  hook i falhou
+    0x8000A003   MinHook init falhou          0x8000A030  enable falhou
+    0xE?xxxxxx   exceção: ? = fase, xxxxxx = código Windows
+                 (ex.: 0xE5C00005 = acesso inválido na fase 5, vtables)
+
+═══════════════════════════════════════════════ PROBLEMAS TÍPICOS ─
+  "OpenProcess failed (5)" — terminal como Administrador; fecha overlays
+    hook-ativos (RTSS/Discord/NVIDIA overlay) se falhar.
+  "export 'RenderLiftInstall' not found" — estás com o build ANTERIOR:
+    apaga tudo e baixa o pacote novo (lembra do Unblock-File).
+  Sem "module armed" — confirma que a DLL está na mesma pasta que o Loader.
+  Log é só "hello" sem "present" — manda tal como está; já é informação.
+  Crash no jogo? Manda o log parcial: a última linha "cp=N" (ou a linha
+    "RLCAP1 seh …") identifica o ponto exato da falha.
+
+────────────────────────────────────────────── O QUE ESTÁ DENTRO ─
+  vtable anchors · MinHook detours: device CreateTexture2D/RTV/DSV, context
+  Draw/DrawIndexed (só contadores), OMSetRenderTargets, RSSetViewports,
+  swapchain Present/ResizeBuffers. NADA altera o rendering — observe-first
+  é lei do projeto (ADR 0003). Formato RLCAP1:
+  docs/research/d3d11-research-layer.md
+
+  Build: Windows CI (MSVC) run 35652290417, 0 erros, 67/67 testes verdes,
+  exports PE verificados no build (RenderLift.D3D11.exports.txt anexo):
+    [1] RenderLiftFrameCount  RVA=0x00005650
+    [2] RenderLiftInstall     RVA=0x00005670
+    [3] RenderLiftUninstall   RVA=0x000056b0
+═══════════════════════════════════════════════════════════════════════════
