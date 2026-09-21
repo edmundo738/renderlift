@@ -34,6 +34,14 @@ The engine inside the product — **ALRR Core** — keeps its own version and is
 - Docs: ADR 0003 (observation-first as project law),
   `docs/research/d3d11-research-layer.md` field manual, `docs/learn/`
   5-layer study path, `docs/apis/d3d11.md` full device/context slot maps.
+- **Landscape study** `docs/research/2026-09-d3d11-landscape-and-gta-v.md`:
+  comparison with gta5_fsr (proxy-DLL + native Frame Scaling is GTA V's real
+  integration point), Courrèges pipeline anatomy, ReShade anti-cheat/depth
+  heuristics, kiero/GH_D3D11_Hook hook-engine parity; roadmap re-prioritizes
+  0.3 around native Frame Scaling + upscale-pass replacement.
+- Windows CI: build on VS 2026 runners, capture compiler logs, publish the
+  lab pack (DLL+Loader+CLI+tests) via the `dist-pack` branch; MSVC fixes
+  (hook-table braces, dllimport switch, registry kernel split — LNK2019).
 - Tests: 16 new checks (wire-format round-trips, garbage rejection,
   aggregation, classifier rules incl. square/shadow atlases, integration
   modes, GTA V profile = observe) — 67 checks total.
