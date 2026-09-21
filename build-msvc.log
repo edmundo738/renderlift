@@ -3,70 +3,44 @@ MSBuild version 18.9.1+a81b43525 for .NET Framework
   1>Checking Build System
   Building Custom Rule D:/a/renderlift/renderlift/third_party/minhook/CMakeLists.txt
   buffer.c
-  Building Custom Rule D:/a/renderlift/renderlift/src/core/CMakeLists.txt
   Building Custom Rule D:/a/renderlift/renderlift/tools/renderlift-loader/CMakeLists.txt
+  Building Custom Rule D:/a/renderlift/renderlift/src/core/CMakeLists.txt
   Json.cpp
   main.cpp
   hook.c
-  trampoline.c
   GameProfile.cpp
-  hde64.c
-C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.51.36231\include\xutility(5094,18): warning C4244: '=': conversion from 'const wchar_t' to 'char', possible loss of data [D:\a\renderlift\renderlift\build\tools\renderlift-loader\renderlift-loader.vcxproj]
-  (compiling source file '../../../tools/renderlift-loader/main.cpp')
-      C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.51.36231\include\xutility(5094,18):
-      the template instantiation context (the oldest one first) is
-          D:\a\renderlift\renderlift\tools\renderlift-loader\main.cpp(278,20):
-          see reference to function template instantiation 'std::basic_string<char,std::char_traits<char>,std::allocator<char>> &std::basic_string<char,std::char_traits<char>,std::allocator<char>>::assign<std::_String_const_iterator<std::_String_val<std::_Simple_types<_Elem>>>,0>(const _Iter,const _Iter)' being compiled
-          with
-          [
-              _Elem=wchar_t,
-              _Iter=std::_String_const_iterator<std::_String_val<std::_Simple_types<wchar_t>>>
-          ]
-              D:\a\renderlift\renderlift\tools\renderlift-loader\main.cpp(278,26):
-              see the first reference to 'std::basic_string<char,std::char_traits<char>,std::allocator<char>>::assign' in 'wmain'
-          C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.51.36231\include\xstring(1686,32):
-          see reference to function template instantiation 'std::basic_string<char,std::char_traits<char>,std::allocator<char>>::basic_string<const wchar_t*,0>(_Iter,_Iter,const _Alloc &)' being compiled
-          with
-          [
-              _Iter=const wchar_t *,
-              _Alloc=std::allocator<char>
-          ]
-          C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.51.36231\include\xstring(862,17):
-          see reference to function template instantiation 'void std::basic_string<char,std::char_traits<char>,std::allocator<char>>::_Construct_from_iter<const wchar_t*,const wchar_t*,_Size_type>(_Iter,const _Sent,_Size)' being compiled
-          with
-          [
-              _Size_type=unsigned __int64,
-              _Iter=const wchar_t *,
-              _Sent=const wchar_t *,
-              _Size=unsigned __int64
-          ]
-          C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.51.36231\include\xstring(1018,18):
-          see reference to function template instantiation '_OutIt *std::_Copy_n_unchecked4<const wchar_t*,_Size,char*>(_InIt,_SizeTy,_OutIt)' being compiled
-          with
-          [
-              _OutIt=char *,
-              _Size=unsigned __int64,
-              _InIt=const wchar_t *,
-              _SizeTy=unsigned __int64
-          ]
+  trampoline.c
+D:\a\renderlift\renderlift\tools\renderlift-loader\main.cpp(297,5): error C2065: 'PROCESS_MITIGATION_SIGNATURE_POLICY': undeclared identifier [D:\a\renderlift\renderlift\build\tools\renderlift-loader\renderlift-loader.vcxproj]
+D:\a\renderlift\renderlift\tools\renderlift-loader\main.cpp(297,41): error C2146: syntax error: missing ';' before identifier 'sig' [D:\a\renderlift\renderlift\build\tools\renderlift-loader\renderlift-loader.vcxproj]
+D:\a\renderlift\renderlift\tools\renderlift-loader\main.cpp(297,41): error C2065: 'sig': undeclared identifier [D:\a\renderlift\renderlift\build\tools\renderlift-loader\renderlift-loader.vcxproj]
+D:\a\renderlift\renderlift\tools\renderlift-loader\main.cpp(298,70): error C2065: 'sig': undeclared identifier [D:\a\renderlift\renderlift\build\tools\renderlift-loader\renderlift-loader.vcxproj]
+D:\a\renderlift\renderlift\tools\renderlift-loader\main.cpp(298,82): error C2065: 'sig': undeclared identifier [D:\a\renderlift\renderlift\build\tools\renderlift-loader\renderlift-loader.vcxproj]
+D:\a\renderlift\renderlift\tools\renderlift-loader\main.cpp(300,21): error C2065: 'sig': undeclared identifier [D:\a\renderlift\renderlift\build\tools\renderlift-loader\renderlift-loader.vcxproj]
+D:\a\renderlift\renderlift\tools\renderlift-loader\main.cpp(300,46): error C2065: 'sig': undeclared identifier [D:\a\renderlift\renderlift\build\tools\renderlift-loader\renderlift-loader.vcxproj]
+D:\a\renderlift\renderlift\tools\renderlift-loader\main.cpp(300,67): error C2065: 'sig': undeclared identifier [D:\a\renderlift\renderlift\build\tools\renderlift-loader\renderlift-loader.vcxproj]
+D:\a\renderlift\renderlift\tools\renderlift-loader\main.cpp(299,21): warning C4473: 'printf' : not enough arguments passed for format string [D:\a\renderlift\renderlift\build\tools\renderlift-loader\renderlift-loader.vcxproj]
+      D:\a\renderlift\renderlift\tools\renderlift-loader\main.cpp(299,21):
+      placeholders and their parameters expect 3 variadic arguments, but 0 were provided
+      D:\a\renderlift\renderlift\tools\renderlift-loader\main.cpp(299,21):
+      the missing variadic argument 1 is required by format string '%d'
   
+  hde64.c
   Generating Code...
   minhook.vcxproj -> D:\a\renderlift\renderlift\build\lib\Release\minhook.lib
-  renderlift-loader.vcxproj -> D:\a\renderlift\renderlift\build\bin\Release\RenderLift.Loader.exe
   Generating Code...
   rl-core.vcxproj -> D:\a\renderlift\renderlift\build\lib\Release\rl-core.lib
   Building Custom Rule D:/a/renderlift/renderlift/backends/CMakeLists.txt
-  Building Custom Rule D:/a/renderlift/renderlift/src/reconstruction/CMakeLists.txt
-  Building Custom Rule D:/a/renderlift/renderlift/src/resolution/CMakeLists.txt
   HookEngine.cpp
-  Reconstruction.cpp
+  Building Custom Rule D:/a/renderlift/renderlift/src/resolution/CMakeLists.txt
+  Building Custom Rule D:/a/renderlift/renderlift/src/reconstruction/CMakeLists.txt
   ResolutionManager.cpp
+  Reconstruction.cpp
   SpatialUpscaler.cpp
   Steering.cpp
   DynamicResolutionController.cpp
+  Generating Code...
   EdgeUpscaler.cpp
   CaptureFormat.cpp
-  Generating Code...
   rl-resolution.vcxproj -> D:\a\renderlift\renderlift\build\lib\Release\rl-resolution.lib
   Generating Code...
   FrameCapture.cpp
@@ -80,22 +54,22 @@ D:\a\renderlift\renderlift\backends\common\src\obs\ResourceClassifier.cpp(89,56)
   Building Custom Rule D:/a/renderlift/renderlift/backends/CMakeLists.txt
   Building Custom Rule D:/a/renderlift/renderlift/backends/CMakeLists.txt
   D3D11Module.cpp
+  D3D9Backend.cpp
+  D3D12Backend.cpp
+  Building Custom Rule D:/a/renderlift/renderlift/backends/CMakeLists.txt
   VulkanBackend.cpp
+  Building Custom Rule D:/a/renderlift/renderlift/backends/CMakeLists.txt
   D3D11Backend.cpp
   Building Custom Rule D:/a/renderlift/renderlift/backends/CMakeLists.txt
-  D3D9Backend.cpp
-  Building Custom Rule D:/a/renderlift/renderlift/backends/CMakeLists.txt
-  D3D12Backend.cpp
-  rl-backend-d3d11-kernel.vcxproj -> D:\a\renderlift\renderlift\build\lib\Release\rl-backend-d3d11-kernel.lib
-  rl-backend-d3d9.vcxproj -> D:\a\renderlift\renderlift\build\lib\Release\rl-backend-d3d9.lib
+  D3D10Backend.cpp
+  rl-backend-d3d12.vcxproj -> D:\a\renderlift\renderlift\build\lib\Release\rl-backend-d3d12.lib
 D:\a\renderlift\renderlift\backends\d3d11\src\win\D3D11Module.cpp(424,32): warning C4996: 'getenv': This function or variable may be unsafe. Consider using _dupenv_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details. [D:\a\renderlift\renderlift\build\backends\rl-backend-d3d11.vcxproj]
   rl-backend-vulkan.vcxproj -> D:\a\renderlift\renderlift\build\lib\Release\rl-backend-vulkan.lib
-  rl-backend-d3d12.vcxproj -> D:\a\renderlift\renderlift\build\lib\Release\rl-backend-d3d12.lib
-  Building Custom Rule D:/a/renderlift/renderlift/backends/CMakeLists.txt
-  D3D10Backend.cpp
+  rl-backend-d3d9.vcxproj -> D:\a\renderlift\renderlift\build\lib\Release\rl-backend-d3d9.lib
+  rl-backend-d3d11-kernel.vcxproj -> D:\a\renderlift\renderlift\build\lib\Release\rl-backend-d3d11-kernel.lib
+  rl-backend-d3d10.vcxproj -> D:\a\renderlift\renderlift\build\lib\Release\rl-backend-d3d10.lib
      Creating library D:/a/renderlift/renderlift/build/lib/Release/RenderLift.D3D11.lib and object D:/a/renderlift/renderlift/build/lib/Release/RenderLift.D3D11.exp
   rl-backend-d3d11.vcxproj -> D:\a\renderlift\renderlift\build\bin\Release\RenderLift.D3D11.dll
-  rl-backend-d3d10.vcxproj -> D:\a\renderlift\renderlift\build\lib\Release\rl-backend-d3d10.lib
   Building Custom Rule D:/a/renderlift/renderlift/tools/renderlift-cli/CMakeLists.txt
   Building Custom Rule D:/a/renderlift/renderlift/tests/CMakeLists.txt
   main.cpp
@@ -117,4 +91,3 @@ D:\a\renderlift\renderlift\tools\renderlift-cli\main.cpp(90,14): warning C4996: 
   test_integration.cpp
   Generating Code...
   renderlift-tests.vcxproj -> D:\a\renderlift\renderlift\build\bin\Release\renderlift-tests.exe
-  Building Custom Rule D:/a/renderlift/renderlift/CMakeLists.txt
