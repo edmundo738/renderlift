@@ -1,0 +1,24 @@
+{
+  "schema": "renderlift.game-profile/1",
+  "id": "gta5",
+  "title": "Grand Theft Auto V",
+  "executable": "GTA5.exe",
+  "api": "d3d11",
+  "laboratory": true,
+  "display": {"width": 1366, "height": 768},
+  "internal_ladder": [
+    {"width":426,"height":240},
+    {"width":480,"height":270},
+    {"width":640,"height":360},
+    {"width":854,"height":480},
+    {"width":1024,"height":576},
+    {"width":1366,"height":768}
+  ],
+  "defaults": {
+    "internal_resolution": "640x360",
+    "reconstruction": "edge",
+    "sharpen": 0.35,
+    "dynamic_resolution": false,
+    "native_ui": true
+  }
+}
