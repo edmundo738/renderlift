@@ -15,10 +15,15 @@ exist so the first dependency lands with its process already in place.
 5. Never vendor anything that circumvents anti-cheat, DRM, or online
    protections (see SECURITY.md).
 
+## Vendored
+
+| Component | Version | For | Landed |
+|---|---|---|---|
+| MinHook | 1.3.4 | D3D9–D3D12 hook engine | RenderLift 0.2 groundwork |
+
 ## Planned
 
 | Component | For | When |
 |---|---|---|
-| MinHook | D3D9–D3D12 hook engine | RenderLift 0.2 |
 | volk | Vulkan function loading | Vulkan backend |
 | NVIDIA Image Scaling shaders | NIS reconstruction fallback | optional tier |

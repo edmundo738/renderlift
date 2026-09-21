@@ -7,6 +7,24 @@ The engine inside the product — **ALRR Core** — keeps its own version and is
 
 ## [Unreleased]
 
+### Added — 0.2 groundwork (hook engine + D3D11 module)
+- **MinHook 1.3.4 vendored** (`third_party/minhook`, BSD-2) — the D3D backend
+  hook engine; notices updated.
+- `rl::backend::IHookEngine` (MinHook engine on Windows, honest stub elsewhere)
+  and read-only `rl::backend::VTable` (COM slot reading/anchor resolution).
+- `rl::backend`: platform-neutral **steering core** — `SteeringPolicy`
+  (display-sized color targets → internal resolution; depth/aux never
+  touched; native rung is identity/skip) and `RenderTargetRegistry`
+  (per-frame bind tracking feeding pass classification).
+- `RenderLift.D3D11.dll` is now a real SHARED module on Windows: probe-device
+  vtable bootstrap, MinHook detours on `IDXGISwapChain::Present` and
+  `ResizeBuffers` (measured passthrough + display tracking feeding the
+  steering policy), injection contract `RenderLiftInstall/Uninstall/
+  FrameCount`, DllMain loader-lock discipline.
+- Tests: vtable slot stability/calling, hook-engine stub honesty, steering
+  policy + registry suites (51 checks total).
+- Docs: ADR 0002 (hook engine + injection decisions), D3D11 vtable slot map.
+
 ## [0.1.0] — 2026-09-21 · ALRR Spatial 0.1
 
 Initial public scaffold. GTA V is declared the first test lab; the project is born multi-game and multi-API.

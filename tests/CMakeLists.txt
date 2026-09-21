@@ -9,6 +9,8 @@ add_executable(renderlift-tests
     test_reconstruction.cpp
     test_render_path.cpp
     test_backends.cpp
+    test_vtable.cpp
+    test_steering.cpp
 )
 
 target_include_directories(renderlift-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})

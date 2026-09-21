@@ -4,7 +4,7 @@ project(RenderLift
     VERSION 0.1.0
     DESCRIPTION "Cross-API low-resolution rendering and reconstruction framework for low-end gaming PCs"
     HOMEPAGE_URL "https://github.com/edmundo738/renderlift"
-    LANGUAGES CXX)
+    LANGUAGES C CXX)
 
 # The reconstruction engine inside RenderLift versions independently.
 #   0.1 → ALRR Spatial · 0.5 → ALRR Edge · 1.0 → ALRR Temporal
@@ -50,6 +50,10 @@ else()
 endif()
 
 # ── Targets ─────────────────────────────────────────────────────
+if(WIN32)
+    add_subdirectory(third_party/minhook)  # vendored hook engine (BSD-2)
+endif()
+
 add_subdirectory(src)            # ALRR Core (API-agnostic engine)
 
 if(RENDERLIFT_BUILD_BACKENDS)
