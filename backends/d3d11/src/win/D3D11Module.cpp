@@ -444,22 +444,22 @@ HRESULT installLocked(ModuleState& s) {
         void** original;
     };
     const Install installs[] = {
-        {vt.present, reinterpret_cast<void*>(&Present_Hook},
+        {vt.present, reinterpret_cast<void*>(&Present_Hook),
          reinterpret_cast<void**>(&s.originalPresent)},
-        {vt.resizeBuffers, reinterpret_cast<void*>(&ResizeBuffers_Hook},
+        {vt.resizeBuffers, reinterpret_cast<void*>(&ResizeBuffers_Hook),
          reinterpret_cast<void**>(&s.originalResizeBuffers)},
-        {vt.createTexture2D, reinterpret_cast<void*>(&CreateTexture2D_Hook},
+        {vt.createTexture2D, reinterpret_cast<void*>(&CreateTexture2D_Hook),
          reinterpret_cast<void**>(&s.originalCreateTexture2D)},
-        {vt.createRtv, reinterpret_cast<void*>(&CreateRtv_Hook},
+        {vt.createRtv, reinterpret_cast<void*>(&CreateRtv_Hook),
          reinterpret_cast<void**>(&s.originalCreateRtv)},
-        {vt.createDsv, reinterpret_cast<void*>(&CreateDsv_Hook},
+        {vt.createDsv, reinterpret_cast<void*>(&CreateDsv_Hook),
          reinterpret_cast<void**>(&s.originalCreateDsv)},
-        {vt.drawIndexed, reinterpret_cast<void*>(&DrawIndexed_Hook},
+        {vt.drawIndexed, reinterpret_cast<void*>(&DrawIndexed_Hook),
          reinterpret_cast<void**>(&s.originalDrawIndexed)},
         {vt.draw, reinterpret_cast<void*>(&Draw_Hook), reinterpret_cast<void**>(&s.originalDraw)},
-        {vt.omSetRenderTargets, reinterpret_cast<void*>(&OMSetRenderTargets_Hook},
+        {vt.omSetRenderTargets, reinterpret_cast<void*>(&OMSetRenderTargets_Hook),
          reinterpret_cast<void**>(&s.originalOMSetRenderTargets)},
-        {vt.rsSetViewports, reinterpret_cast<void*>(&RSSetViewports_Hook},
+        {vt.rsSetViewports, reinterpret_cast<void*>(&RSSetViewports_Hook),
          reinterpret_cast<void**>(&s.originalRSSetViewports)},
     };
     for (const Install& i : installs) {
