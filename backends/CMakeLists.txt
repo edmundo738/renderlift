@@ -1,0 +1,6 @@
+add_subdirectory(common)
+add_subdirectory(d3d9)
+add_subdirectory(d3d10)
+add_subdirectory(d3d11)
+add_subdirectory(d3d12)
+add_subdirectory(vulkan)
