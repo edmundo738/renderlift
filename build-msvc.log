@@ -3,14 +3,14 @@ MSBuild version 18.9.1+a81b43525 for .NET Framework
   1>Checking Build System
   Building Custom Rule D:/a/renderlift/renderlift/third_party/minhook/CMakeLists.txt
   buffer.c
-  Building Custom Rule D:/a/renderlift/renderlift/tools/renderlift-loader/CMakeLists.txt
   Building Custom Rule D:/a/renderlift/renderlift/src/core/CMakeLists.txt
-  main.cpp
+  Building Custom Rule D:/a/renderlift/renderlift/tools/renderlift-loader/CMakeLists.txt
   Json.cpp
-  GameProfile.cpp
-  Generating Code...
+  main.cpp
   hook.c
   trampoline.c
+  GameProfile.cpp
+  hde64.c
 C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.51.36231\include\xutility(5094,18): warning C4244: '=': conversion from 'const wchar_t' to 'char', possible loss of data [D:\a\renderlift\renderlift\build\tools\renderlift-loader\renderlift-loader.vcxproj]
   (compiling source file '../../../tools/renderlift-loader/main.cpp')
       C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.51.36231\include\xutility(5094,18):
@@ -50,26 +50,26 @@ C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.51.36231
               _SizeTy=unsigned __int64
           ]
   
-  hde64.c
   Generating Code...
   minhook.vcxproj -> D:\a\renderlift\renderlift\build\lib\Release\minhook.lib
+  renderlift-loader.vcxproj -> D:\a\renderlift\renderlift\build\bin\Release\RenderLift.Loader.exe
+  Generating Code...
   rl-core.vcxproj -> D:\a\renderlift\renderlift\build\lib\Release\rl-core.lib
   Building Custom Rule D:/a/renderlift/renderlift/backends/CMakeLists.txt
-  HookEngine.cpp
-  Building Custom Rule D:/a/renderlift/renderlift/src/resolution/CMakeLists.txt
-  ResolutionManager.cpp
-  renderlift-loader.vcxproj -> D:\a\renderlift\renderlift\build\bin\Release\RenderLift.Loader.exe
   Building Custom Rule D:/a/renderlift/renderlift/src/reconstruction/CMakeLists.txt
+  Building Custom Rule D:/a/renderlift/renderlift/src/resolution/CMakeLists.txt
+  HookEngine.cpp
   Reconstruction.cpp
-  Steering.cpp
+  ResolutionManager.cpp
   SpatialUpscaler.cpp
+  Steering.cpp
   DynamicResolutionController.cpp
-  CaptureFormat.cpp
   EdgeUpscaler.cpp
+  CaptureFormat.cpp
   Generating Code...
   rl-resolution.vcxproj -> D:\a\renderlift\renderlift\build\lib\Release\rl-resolution.lib
-  FrameCapture.cpp
   Generating Code...
+  FrameCapture.cpp
   rl-reconstruction.vcxproj -> D:\a\renderlift\renderlift\build\lib\Release\rl-reconstruction.lib
   ResourceClassifier.cpp
 D:\a\renderlift\renderlift\backends\common\src\obs\ResourceClassifier.cpp(85,49): warning C4305: 'initializing': truncation from 'double' to 'float' [D:\a\renderlift\renderlift\build\backends\rl-backend-common.vcxproj]
@@ -79,30 +79,30 @@ D:\a\renderlift\renderlift\backends\common\src\obs\ResourceClassifier.cpp(89,56)
   Building Custom Rule D:/a/renderlift/renderlift/backends/CMakeLists.txt
   Building Custom Rule D:/a/renderlift/renderlift/backends/CMakeLists.txt
   Building Custom Rule D:/a/renderlift/renderlift/backends/CMakeLists.txt
-  VulkanBackend.cpp
-  D3D12Backend.cpp
-  Building Custom Rule D:/a/renderlift/renderlift/backends/CMakeLists.txt
-  D3D9Backend.cpp
   D3D11Module.cpp
-  Building Custom Rule D:/a/renderlift/renderlift/backends/CMakeLists.txt
+  VulkanBackend.cpp
   D3D11Backend.cpp
   Building Custom Rule D:/a/renderlift/renderlift/backends/CMakeLists.txt
-  rl-backend-vulkan.vcxproj -> D:\a\renderlift\renderlift\build\lib\Release\rl-backend-vulkan.lib
-  D3D10Backend.cpp
-  rl-backend-d3d12.vcxproj -> D:\a\renderlift\renderlift\build\lib\Release\rl-backend-d3d12.lib
-  rl-backend-d3d9.vcxproj -> D:\a\renderlift\renderlift\build\lib\Release\rl-backend-d3d9.lib
+  D3D9Backend.cpp
+  Building Custom Rule D:/a/renderlift/renderlift/backends/CMakeLists.txt
+  D3D12Backend.cpp
   rl-backend-d3d11-kernel.vcxproj -> D:\a\renderlift\renderlift\build\lib\Release\rl-backend-d3d11-kernel.lib
+  rl-backend-d3d9.vcxproj -> D:\a\renderlift\renderlift\build\lib\Release\rl-backend-d3d9.lib
+D:\a\renderlift\renderlift\backends\d3d11\src\win\D3D11Module.cpp(424,32): warning C4996: 'getenv': This function or variable may be unsafe. Consider using _dupenv_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details. [D:\a\renderlift\renderlift\build\backends\rl-backend-d3d11.vcxproj]
+  rl-backend-vulkan.vcxproj -> D:\a\renderlift\renderlift\build\lib\Release\rl-backend-vulkan.lib
+  rl-backend-d3d12.vcxproj -> D:\a\renderlift\renderlift\build\lib\Release\rl-backend-d3d12.lib
+  Building Custom Rule D:/a/renderlift/renderlift/backends/CMakeLists.txt
+  D3D10Backend.cpp
+     Creating library D:/a/renderlift/renderlift/build/lib/Release/RenderLift.D3D11.lib and object D:/a/renderlift/renderlift/build/lib/Release/RenderLift.D3D11.exp
+  rl-backend-d3d11.vcxproj -> D:\a\renderlift\renderlift\build\bin\Release\RenderLift.D3D11.dll
   rl-backend-d3d10.vcxproj -> D:\a\renderlift\renderlift\build\lib\Release\rl-backend-d3d10.lib
   Building Custom Rule D:/a/renderlift/renderlift/tools/renderlift-cli/CMakeLists.txt
   Building Custom Rule D:/a/renderlift/renderlift/tests/CMakeLists.txt
-  test_main.cpp
   main.cpp
+  test_main.cpp
   test_types.cpp
-D:\a\renderlift\renderlift\backends\d3d11\src\win\D3D11Module.cpp(262,32): warning C4996: 'getenv': This function or variable may be unsafe. Consider using _dupenv_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details. [D:\a\renderlift\renderlift\build\backends\rl-backend-d3d11.vcxproj]
 D:\a\renderlift\renderlift\tools\renderlift-cli\main.cpp(90,14): warning C4996: 'sscanf': This function or variable may be unsafe. Consider using sscanf_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details. [D:\a\renderlift\renderlift\build\tools\renderlift-cli\renderlift-cli.vcxproj]
   test_json.cpp
-     Creating library D:/a/renderlift/renderlift/build/lib/Release/RenderLift.D3D11.lib and object D:/a/renderlift/renderlift/build/lib/Release/RenderLift.D3D11.exp
-  rl-backend-d3d11.vcxproj -> D:\a\renderlift\renderlift\build\bin\Release\RenderLift.D3D11.dll
   renderlift-cli.vcxproj -> D:\a\renderlift\renderlift\build\bin\Release\RenderLift.CLI.exe
   test_profiles.cpp
   test_resolution_manager.cpp
