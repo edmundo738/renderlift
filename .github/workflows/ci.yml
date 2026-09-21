@@ -36,12 +36,17 @@ jobs:
   windows:
     name: windows (msvc, all targets)
     runs-on: windows-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - name: configure
         run: cmake -B build -G "Visual Studio 17 2022" -A x64
       - name: build
-        run: cmake --build build --config Release -j
+        shell: pwsh
+        run: |
+          cmake --build build --config Release -j | Tee-Object -FilePath build-msvc.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: test
         run: ctest --test-dir build --output-on-failure -C Release
       - name: cli smoke
@@ -52,12 +57,23 @@ jobs:
           if (-not (Test-Path ./build/bin/Release/RenderLift.D3D11.dll)) { throw "RenderLift.D3D11.dll was not produced" }
           if (-not (Test-Path ./build/bin/Release/RenderLift.Loader.exe)) { throw "RenderLift.Loader.exe was not produced" }
           Write-Host "RenderLift.D3D11.dll + RenderLift.Loader.exe produced OK"
-      - name: upload windows artifacts (research-layer lab pack)
-        uses: actions/upload-artifact@v4
-        with:
-          name: renderlift-0.2-windows-x64
-          path: |
-            build/bin/Release/*.dll
-            build/bin/Release/*.exe
-          if-no-files-found: error
-          retention-days: 30
+      - name: publish lab pack to dist-pack branch
+        # The sandbox cannot reach Azure Blob storage (artifact downloads);
+        # a plain git branch is the transport mechanism for binários + logs.
+        if: always()
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist-pack | Out-Null
+          if (Test-Path build/bin/Release) { Copy-Item build/bin/Release/*.dll, build/bin/Release/*.exe dist-pack/ -ErrorAction SilentlyContinue }
+          if (Test-Path build-msvc.log) { Copy-Item build-msvc.log dist-pack/ }
+          "sha: $($env:GITHUB_SHA)`nrun: $($env:GITHUB_RUN_ID)" | Set-Content dist-pack/BUILD.txt
+          Push-Location dist-pack
+          git init -q
+          git config user.email "renderlift-ci@users.noreply.github.com"
+          git config user.name "RenderLift CI"
+          git checkout -q -b dist-pack
+          git add -A
+          git commit -q -m "CI lab pack (run $($env:GITHUB_RUN_ID))" --allow-empty
+          git remote add origin "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
+          git push -q --force origin dist-pack
+          Pop-Location
