@@ -5,23 +5,23 @@ MSBuild version 18.9.1+a81b43525 for .NET Framework
   buffer.c
   Building Custom Rule D:/a/renderlift/renderlift/tools/renderlift-loader/CMakeLists.txt
   Building Custom Rule D:/a/renderlift/renderlift/src/core/CMakeLists.txt
-  Json.cpp
   main.cpp
+  Json.cpp
   hook.c
   GameProfile.cpp
   trampoline.c
-D:\a\renderlift\renderlift\tools\renderlift-loader\main.cpp(297,5): error C2065: 'PROCESS_MITIGATION_SIGNATURE_POLICY': undeclared identifier [D:\a\renderlift\renderlift\build\tools\renderlift-loader\renderlift-loader.vcxproj]
-D:\a\renderlift\renderlift\tools\renderlift-loader\main.cpp(297,41): error C2146: syntax error: missing ';' before identifier 'sig' [D:\a\renderlift\renderlift\build\tools\renderlift-loader\renderlift-loader.vcxproj]
-D:\a\renderlift\renderlift\tools\renderlift-loader\main.cpp(297,41): error C2065: 'sig': undeclared identifier [D:\a\renderlift\renderlift\build\tools\renderlift-loader\renderlift-loader.vcxproj]
-D:\a\renderlift\renderlift\tools\renderlift-loader\main.cpp(298,70): error C2065: 'sig': undeclared identifier [D:\a\renderlift\renderlift\build\tools\renderlift-loader\renderlift-loader.vcxproj]
-D:\a\renderlift\renderlift\tools\renderlift-loader\main.cpp(298,82): error C2065: 'sig': undeclared identifier [D:\a\renderlift\renderlift\build\tools\renderlift-loader\renderlift-loader.vcxproj]
-D:\a\renderlift\renderlift\tools\renderlift-loader\main.cpp(300,21): error C2065: 'sig': undeclared identifier [D:\a\renderlift\renderlift\build\tools\renderlift-loader\renderlift-loader.vcxproj]
-D:\a\renderlift\renderlift\tools\renderlift-loader\main.cpp(300,46): error C2065: 'sig': undeclared identifier [D:\a\renderlift\renderlift\build\tools\renderlift-loader\renderlift-loader.vcxproj]
-D:\a\renderlift\renderlift\tools\renderlift-loader\main.cpp(300,67): error C2065: 'sig': undeclared identifier [D:\a\renderlift\renderlift\build\tools\renderlift-loader\renderlift-loader.vcxproj]
-D:\a\renderlift\renderlift\tools\renderlift-loader\main.cpp(299,21): warning C4473: 'printf' : not enough arguments passed for format string [D:\a\renderlift\renderlift\build\tools\renderlift-loader\renderlift-loader.vcxproj]
-      D:\a\renderlift\renderlift\tools\renderlift-loader\main.cpp(299,21):
+D:\a\renderlift\renderlift\tools\renderlift-loader\main.cpp(305,5): error C2065: 'PROCESS_MITIGATION_SIGNATURE_POLICY': undeclared identifier [D:\a\renderlift\renderlift\build\tools\renderlift-loader\renderlift-loader.vcxproj]
+D:\a\renderlift\renderlift\tools\renderlift-loader\main.cpp(305,41): error C2146: syntax error: missing ';' before identifier 'sig' [D:\a\renderlift\renderlift\build\tools\renderlift-loader\renderlift-loader.vcxproj]
+D:\a\renderlift\renderlift\tools\renderlift-loader\main.cpp(305,41): error C2065: 'sig': undeclared identifier [D:\a\renderlift\renderlift\build\tools\renderlift-loader\renderlift-loader.vcxproj]
+D:\a\renderlift\renderlift\tools\renderlift-loader\main.cpp(306,70): error C2065: 'sig': undeclared identifier [D:\a\renderlift\renderlift\build\tools\renderlift-loader\renderlift-loader.vcxproj]
+D:\a\renderlift\renderlift\tools\renderlift-loader\main.cpp(306,82): error C2065: 'sig': undeclared identifier [D:\a\renderlift\renderlift\build\tools\renderlift-loader\renderlift-loader.vcxproj]
+D:\a\renderlift\renderlift\tools\renderlift-loader\main.cpp(308,21): error C2065: 'sig': undeclared identifier [D:\a\renderlift\renderlift\build\tools\renderlift-loader\renderlift-loader.vcxproj]
+D:\a\renderlift\renderlift\tools\renderlift-loader\main.cpp(308,46): error C2065: 'sig': undeclared identifier [D:\a\renderlift\renderlift\build\tools\renderlift-loader\renderlift-loader.vcxproj]
+D:\a\renderlift\renderlift\tools\renderlift-loader\main.cpp(308,67): error C2065: 'sig': undeclared identifier [D:\a\renderlift\renderlift\build\tools\renderlift-loader\renderlift-loader.vcxproj]
+D:\a\renderlift\renderlift\tools\renderlift-loader\main.cpp(307,21): warning C4473: 'printf' : not enough arguments passed for format string [D:\a\renderlift\renderlift\build\tools\renderlift-loader\renderlift-loader.vcxproj]
+      D:\a\renderlift\renderlift\tools\renderlift-loader\main.cpp(307,21):
       placeholders and their parameters expect 3 variadic arguments, but 0 were provided
-      D:\a\renderlift\renderlift\tools\renderlift-loader\main.cpp(299,21):
+      D:\a\renderlift\renderlift\tools\renderlift-loader\main.cpp(307,21):
       the missing variadic argument 1 is required by format string '%d'
   
   hde64.c
@@ -29,11 +29,11 @@ D:\a\renderlift\renderlift\tools\renderlift-loader\main.cpp(299,21): warning C44
   minhook.vcxproj -> D:\a\renderlift\renderlift\build\lib\Release\minhook.lib
   Generating Code...
   rl-core.vcxproj -> D:\a\renderlift\renderlift\build\lib\Release\rl-core.lib
-  Building Custom Rule D:/a/renderlift/renderlift/backends/CMakeLists.txt
-  HookEngine.cpp
   Building Custom Rule D:/a/renderlift/renderlift/src/resolution/CMakeLists.txt
   Building Custom Rule D:/a/renderlift/renderlift/src/reconstruction/CMakeLists.txt
+  Building Custom Rule D:/a/renderlift/renderlift/backends/CMakeLists.txt
   ResolutionManager.cpp
+  HookEngine.cpp
   Reconstruction.cpp
   SpatialUpscaler.cpp
   Steering.cpp
@@ -53,23 +53,23 @@ D:\a\renderlift\renderlift\backends\common\src\obs\ResourceClassifier.cpp(89,56)
   Building Custom Rule D:/a/renderlift/renderlift/backends/CMakeLists.txt
   Building Custom Rule D:/a/renderlift/renderlift/backends/CMakeLists.txt
   Building Custom Rule D:/a/renderlift/renderlift/backends/CMakeLists.txt
-  D3D11Module.cpp
   D3D9Backend.cpp
-  D3D12Backend.cpp
+  D3D11Module.cpp
+  D3D10Backend.cpp
   Building Custom Rule D:/a/renderlift/renderlift/backends/CMakeLists.txt
   VulkanBackend.cpp
+  rl-backend-d3d9.vcxproj -> D:\a\renderlift\renderlift\build\lib\Release\rl-backend-d3d9.lib
+  rl-backend-d3d10.vcxproj -> D:\a\renderlift\renderlift\build\lib\Release\rl-backend-d3d10.lib
   Building Custom Rule D:/a/renderlift/renderlift/backends/CMakeLists.txt
-  D3D11Backend.cpp
-  Building Custom Rule D:/a/renderlift/renderlift/backends/CMakeLists.txt
-  D3D10Backend.cpp
-  rl-backend-d3d12.vcxproj -> D:\a\renderlift\renderlift\build\lib\Release\rl-backend-d3d12.lib
+  D3D12Backend.cpp
 D:\a\renderlift\renderlift\backends\d3d11\src\win\D3D11Module.cpp(424,32): warning C4996: 'getenv': This function or variable may be unsafe. Consider using _dupenv_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details. [D:\a\renderlift\renderlift\build\backends\rl-backend-d3d11.vcxproj]
   rl-backend-vulkan.vcxproj -> D:\a\renderlift\renderlift\build\lib\Release\rl-backend-vulkan.lib
-  rl-backend-d3d9.vcxproj -> D:\a\renderlift\renderlift\build\lib\Release\rl-backend-d3d9.lib
-  rl-backend-d3d11-kernel.vcxproj -> D:\a\renderlift\renderlift\build\lib\Release\rl-backend-d3d11-kernel.lib
-  rl-backend-d3d10.vcxproj -> D:\a\renderlift\renderlift\build\lib\Release\rl-backend-d3d10.lib
+  Building Custom Rule D:/a/renderlift/renderlift/backends/CMakeLists.txt
+  D3D11Backend.cpp
+  rl-backend-d3d12.vcxproj -> D:\a\renderlift\renderlift\build\lib\Release\rl-backend-d3d12.lib
      Creating library D:/a/renderlift/renderlift/build/lib/Release/RenderLift.D3D11.lib and object D:/a/renderlift/renderlift/build/lib/Release/RenderLift.D3D11.exp
   rl-backend-d3d11.vcxproj -> D:\a\renderlift\renderlift\build\bin\Release\RenderLift.D3D11.dll
+  rl-backend-d3d11-kernel.vcxproj -> D:\a\renderlift\renderlift\build\lib\Release\rl-backend-d3d11-kernel.lib
   Building Custom Rule D:/a/renderlift/renderlift/tools/renderlift-cli/CMakeLists.txt
   Building Custom Rule D:/a/renderlift/renderlift/tests/CMakeLists.txt
   main.cpp
