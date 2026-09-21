@@ -62,6 +62,19 @@ jobs:
           if (-not (Test-Path ./build/bin/Release/RenderLift.D3D11.dll)) { throw "RenderLift.D3D11.dll was not produced" }
           if (-not (Test-Path ./build/bin/Release/RenderLift.Loader.exe)) { throw "RenderLift.Loader.exe was not produced" }
           Write-Host "RenderLift.D3D11.dll + RenderLift.Loader.exe produced OK"
+      - name: EXPORT CONTRACT verification (fails build if missing)
+        # The injection contract (RenderLiftInstall/Uninstall/FrameCount) is
+        # part of the product. Parse the actual PE export table of the final
+        # DLL — never trust source alone. Evidence lands in the lab pack.
+        shell: pwsh
+        run: |
+          python tools/ci/pe_exports.py ./build/bin/Release/RenderLift.D3D11.dll | Tee-Object -FilePath RenderLift.D3D11.exports.txt
+          $log = Get-Content RenderLift.D3D11.exports.txt -Raw
+          if ($log -match 'WARNING: C\+\+ name mangling') { throw 'C++ name mangling in exports — extern broken' }
+          foreach ($name in @('RenderLiftInstall','RenderLiftUninstall','RenderLiftFrameCount')) {
+              if (-not ($log -match [regex]::Escape($name))) { throw "REQUIRED EXPORT MISSING: $name" }
+          }
+          Write-Host "export contract verified (3/3 exports present, no mangling)"
       - name: publish lab pack to dist-pack branch
         # The sandbox cannot reach Azure Blob storage (artifact downloads);
         # a plain git branch is the transport mechanism for binários + logs.
@@ -72,6 +85,7 @@ jobs:
           if (Test-Path build/bin/Release) { Copy-Item build/bin/Release/*.dll, build/bin/Release/*.exe dist-pack/ -ErrorAction SilentlyContinue }
           if (Test-Path build-msvc.log) { Copy-Item build-msvc.log dist-pack/ }
           if (Test-Path build-msvc-configure.log) { Copy-Item build-msvc-configure.log dist-pack/ }
+          if (Test-Path RenderLift.D3D11.exports.txt) { Copy-Item RenderLift.D3D11.exports.txt dist-pack/ }
           "sha: $($env:GITHUB_SHA)`nrun: $($env:GITHUB_RUN_ID)" | Set-Content dist-pack/BUILD.txt
           Push-Location dist-pack
           git init -q

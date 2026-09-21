@@ -135,45 +135,127 @@ bool injectDll(HANDLE process, const std::wstring& dllPath, HMODULE* remoteModul
     return ok;
 }
 
-// Call `exportName` inside the injected module remotely (ASLR-safe: compute
-// the export's RVA locally, add the module's REMOTE base address).
-bool callRemoteExport(HANDLE process, HMODULE remoteModule, const std::string& dllPath,
-                      const char* exportName) {
-    HMODULE localCopy = LoadLibraryExW(absolutePath(
-        std::wstring(dllPath.begin(), dllPath.end())).c_str(), nullptr,
-        LOAD_LIBRARY_AS_DATAFILE | DONT_RESOLVE_DLL_REFERENCES);
-    if (localCopy == nullptr) {
-        std::fprintf(stderr, "error: cannot map local copy of the DLL (%lu)\n",
-                     GetLastError());
-        return false;
+// Resolve an export's RVA by parsing the PE headers of the file image.
+//
+// Why not LoadLibraryExW(LOAD_LIBRARY_AS_DATAFILE) + GetProcAddress? That
+// path relies on undocumented loader behavior: on modern Windows builds
+// GetProcAddress may legitimately return NULL for a datafile-mapped module
+// (observed in the wild during the first GTA V lab run — bug report in
+// docs/research/d3d11-research-layer.md). Reading the export directory
+// ourselves is deterministic on every Windows version and never executes
+// foreign DllMain code.
+std::uint32_t findExportRva(const std::wstring& dllPath, const char* exportName) {
+    HANDLE file = CreateFileW(absolutePath(dllPath).c_str(), GENERIC_READ,
+                              FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                              OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) {
+        std::fprintf(stderr, "error: cannot open DLL file (%lu)\n", GetLastError());
+        return 0;
     }
+    const DWORD size = GetFileSize(file, nullptr);
+    std::vector<BYTE> data(size);
+    DWORD done = 0;
+    const BOOL rd = ReadFile(file, data.data(), size, &done, nullptr);
+    CloseHandle(file);
+    if (rd == 0 || done != size || size < 0x100) {
+        std::fprintf(stderr, "error: cannot read DLL file completely\n");
+        return 0;
+    }
+    const BYTE* d = data.data();
+    auto dwordAt = [&](DWORD off) -> DWORD {
+        return *reinterpret_cast<const DWORD*>(d + off);
+    };
+    auto wordAt = [&](DWORD off) -> WORD {
+        return *reinterpret_cast<const WORD*>(d + off);
+    };
 
-    bool ok = false;
-    const FARPROC localExport = GetProcAddress(localCopy, exportName);
-    if (localExport == nullptr) {
-        std::fprintf(stderr, "error: export '%s' not found in module\n", exportName);
-    } else {
-        const std::uintptr_t rva = reinterpret_cast<std::uintptr_t>(localExport) -
-                                   reinterpret_cast<std::uintptr_t>(localCopy);
-        const auto remoteEntry = reinterpret_cast<LPTHREAD_START_ROUTINE>(
-            reinterpret_cast<std::uintptr_t>(remoteModule) + rva);
+    if (d[0] != 'M' || d[1] != 'Z') return 0;
+    const DWORD pe = dwordAt(0x3C);
+    if (pe + 24 > size || std::memcmp(d + pe, "PE\0\0", 4) != 0) return 0;
 
-        HANDLE thread = CreateRemoteThread(process, nullptr, 0, remoteEntry, nullptr, 0,
-                                           nullptr);
-        if (thread == nullptr) {
-            std::fprintf(stderr, "error: CreateRemoteThread(%s) failed (%lu)\n", exportName,
-                         GetLastError());
-        } else {
-            WaitForSingleObject(thread, INFINITE);
-            DWORD exitCode = 0;
-            GetExitCodeThread(thread, &exitCode);
-            CloseHandle(thread);
-            std::printf("remote %s returned 0x%08lx\n", exportName, exitCode);
-            ok = SUCCEEDED(static_cast<HRESULT>(exitCode));
+    const WORD nSections = wordAt(pe + 6);
+    const WORD optSize = wordAt(pe + 20);
+    const DWORD opt = pe + 24;
+    const WORD magic = wordAt(opt);
+    const bool is64 = magic == 0x20B;
+    const DWORD dataDir = opt + (is64 ? 112 : 96);
+    if (dataDir + 8 > size) return 0;
+    const DWORD expRva = dwordAt(dataDir);
+    if (expRva == 0) return 0;
+
+    const DWORD secBase = opt + optSize;
+    const auto rvaToOffset = [&](DWORD rva) -> DWORD {
+        for (WORD i = 0; i < nSections; ++i) {
+            const DWORD s = secBase + 40 * i;
+            if (s + 40 > size) break;
+            const DWORD vSize = dwordAt(s + 8);
+            const DWORD vAddr = dwordAt(s + 12);
+            const DWORD rawSize = dwordAt(s + 16);
+            const DWORD rawPtr = dwordAt(s + 20);
+            if (rva >= vAddr && rva < vAddr + (vSize > rawSize ? vSize : rawSize)) {
+                return rawPtr + (rva - vAddr);
+            }
+        }
+        return 0;
+    };
+
+    const DWORD expOff = rvaToOffset(expRva);
+    if (expOff == 0 || expOff + 40 > size) return 0;
+    const DWORD nNames = dwordAt(expOff + 24);
+    const DWORD namesOff = rvaToOffset(dwordAt(expOff + 32));
+    const DWORD ordsOff = rvaToOffset(dwordAt(expOff + 36));
+    const DWORD funcsOff = rvaToOffset(dwordAt(expOff + 28));
+    if (namesOff == 0 || ordsOff == 0 || funcsOff == 0) return 0;
+
+    for (DWORD i = 0; i < nNames; ++i) {
+        if (namesOff + 4 * (i + 1) > size) break;
+        const DWORD nameOff = rvaToOffset(dwordAt(namesOff + 4 * i));
+        if (nameOff == 0 || nameOff >= size) continue;
+        const char* name = reinterpret_cast<const char*>(d + nameOff);
+        if (std::memchr(name, '\0', size - nameOff) == nullptr) continue;
+        if (std::strcmp(name, exportName) == 0) {
+            if (ordsOff + 2 * (i + 1) > size) return 0;
+            const WORD ordIdx = *reinterpret_cast<const WORD*>(d + ordsOff + 2 * i);
+            if (funcsOff + 4 * (DWORD)ordIdx + 4 > size) return 0;
+            return dwordAt(funcsOff + 4 * (DWORD)ordIdx);
         }
     }
+    std::fprintf(stderr, "error: export '%s' is not listed in %ls\n", exportName,
+                 dllPath.c_str());
+    return 0;
+}
 
-    FreeLibrary(localCopy);
+// Call `exportName` inside the injected module remotely. ASLR-safe: we add
+// the export's RVA (parsed from the file image — see above) to the module's
+// REMOTE base address, which is where Windows actually mapped it.
+bool callRemoteExport(HANDLE process, HMODULE remoteModule, const std::string& dllPath,
+                      const char* exportName) {
+    const std::uint32_t rva = findExportRva(
+        std::wstring(dllPath.begin(), dllPath.end()), exportName);
+    if (rva == 0) {
+        std::fprintf(stderr, "error: export '%s' not found in module\n", exportName);
+        return false;
+    }
+    std::printf("export %s at RVA=0x%08lx, remote VA=0x%p\n", exportName,
+                static_cast<unsigned long>(rva),
+                reinterpret_cast<void*>(reinterpret_cast<std::uintptr_t>(remoteModule) + rva));
+
+    const auto remoteEntry = reinterpret_cast<LPTHREAD_START_ROUTINE>(
+        reinterpret_cast<std::uintptr_t>(remoteModule) + rva);
+    bool ok = false;
+    HANDLE thread =
+        CreateRemoteThread(process, nullptr, 0, remoteEntry, nullptr, 0, nullptr);
+    if (thread == nullptr) {
+        std::fprintf(stderr, "error: CreateRemoteThread(%s) failed (%lu)\n", exportName,
+                     GetLastError());
+    } else {
+        WaitForSingleObject(thread, INFINITE);
+        DWORD exitCode = 0;
+        GetExitCodeThread(thread, &exitCode);
+        CloseHandle(thread);
+        std::printf("remote %s returned 0x%08lx\n", exportName, exitCode);
+        ok = SUCCEEDED(static_cast<HRESULT>(exitCode));
+    }
     return ok;
 }
 
