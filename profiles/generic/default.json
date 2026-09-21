@@ -1,0 +1,12 @@
+{
+  "schema": "renderlift.game-profile/1",
+  "id": "generic.default",
+  "title": "Generic Game",
+  "apis": ["d3d9","d3d10","d3d11","d3d12","vulkan"],
+  "defaults": {
+    "reconstruction": "edge",
+    "sharpen": 0.25,
+    "dynamic_resolution": true,
+    "native_ui": true
+  }
+}
