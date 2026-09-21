@@ -302,16 +302,44 @@ void printMitigationPolicies(HANDLE process) {
                     acg.ProhibitDynamicCode, acg.AllowThreadOptOut, acg.AllowRemoteDowngrade);
         any = true;
     }
-    PROCESS_MITIGATION_SIGNATURE_POLICY sig{};
-    if (GetProcessMitigationPolicy(process, ProcessSignaturePolicy, &sig, sizeof sig)) {
+    // NOTE: the SIGNATURE (9) / IMAGE_LOAD (11) policy structs are gated out
+    // of winnt.h on some CI SDKs regardless of NTDDI_VERSION. Their layouts
+    // are ABI-stable since Windows 8/10 — declared locally; the query takes
+    // the documented numeric policy ids.
+    struct RLMitigationSignaturePolicy {
+        union {
+            DWORD Flags;
+            struct {
+                DWORD MicrosoftSignedOnly : 1;
+                DWORD StoreSignedOnly : 1;
+                DWORD MitigationOptIn : 1;
+                DWORD ReservedFlags : 29;
+            } b;
+        } u;
+    } sig{};
+    if (GetProcessMitigationPolicy(process, static_cast<PROCESS_MITIGATION_POLICY>(9),
+                                   &sig, sizeof sig)) {
         std::printf("mitig SIGN: MicrosoftSignedOnly=%d StoreSignedOnly=%d OptIn=%d\n",
-                    sig.MicrosoftSignedOnly, sig.StoreSignedOnly, sig.MitigationOptIn);
+                    sig.u.b.MicrosoftSignedOnly, sig.u.b.StoreSignedOnly,
+                    sig.u.b.MitigationOptIn);
         any = true;
     }
-    PROCESS_MITIGATION_IMAGE_LOAD_POLICY img{};
-    if (GetProcessMitigationPolicy(process, ProcessImageLoadPolicy, &img, sizeof img)) {
+    struct RLMitigationImageLoadPolicy {
+        union {
+            DWORD Flags;
+            struct {
+                DWORD NoRemoteImages : 1;
+                DWORD NoLowMandatoryLabelImages : 1;
+                DWORD PreferSystem32Images : 1;
+                DWORD ReservedFlags : 29;
+            } b;
+        } u;
+    } img{};
+    if (GetProcessMitigationPolicy(process, static_cast<PROCESS_MITIGATION_POLICY>(11),
+                                   &img, sizeof img)) {
         std::printf("mitig IMGLOAD: NoRemoteImages=%d NoLowIL=%d PreferSystem32=%d\n",
-                    img.NoRemoteImages, img.NoLowMandatoryLabelImages, img.PreferSystem32Images);
+                    img.u.b.NoRemoteImages, img.u.b.NoLowMandatoryLabelImages,
+                    img.u.b.PreferSystem32Images);
         any = true;
     }
     PROCESS_MITIGATION_EXTENSION_POINT_DISABLE_POLICY ext{};
