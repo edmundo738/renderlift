@@ -99,6 +99,54 @@ final). O loader e os hooks são vetted por code review + compilados no CI
 Windows, mas o progresso "dentro do jogo" é o próximo marco do projeto — o
 sucesso é medido pelo mapa de recursos produzido, não por commits.
 
+## 5.1 Primeira corrida real (GTA V Legacy 1.0.3889.0, 2026-09-21)
+
+**Run 1 — falha do lado do loader.** `LoadLibraryExW(LOAD_LIBRARY_AS_DATAFILE)`
++ `GetProcAddress` devolvia NULL para uma DLL com a export table intacta →
+`error: export 'RenderLiftInstall' not found`. Correção: o loader passou a ler
+diretamente o PE Export Directory do ficheiro (`findExportRva`) e calcular
+`remote VA = base remota + RVA` (commit `b2bf495`), com verificação CI do
+contrato de exports + evidência publicada (`RenderLift.D3D11.exports.txt`).
+
+**Run 2 — `0xc0000005` no primeiro contacto.** LoadLibrary remoto OK
+(base `0xBA1E0000`), export resolvido (`RVA 0x4BA0`), thread remota criada —
+e a thread morreu com Access Violation, derrubando o processo. WER Event
+1000: `Fault offset == 0xBA1E4BA0`, **bit-exato com a entry VA de
+`RenderLiftInstall`**; zero linhas de log sobreviveram. Disassembly da DLL
+que crashou (objdump, sha256 `eebf2c46…`) mostrou o entry real: store na
+stack na 1ª instrução → /GS cookie → `state()` **magic static** →
+`_Init_thread_header` (CRT) → construção implícita de `ModuleState`
+(`std::mutex`/`std::ofstream`/vtables) → MinHook → e o logger só no fim
+desta fila, com path relativo para o cwd do jogo (pasta OneDrive).
+Eliminados pela própria disassembly: D3D11/Device/Context/SwapChain/vtable-
+probe como causa do crash de entrada (correm muito depois); eliminada ABI
+(x64 tem convenção única; o `GetExitCodeThread` devolveu o código — o
+contrato de retorno funcionou).
+
+**Correção (commit `8cbb7cb`) — install "evidence-first":**
+
+- Exports com a forma exata de thread-proc: `HRESULT WINAPI fn(LPVOID)`
+  (nomes do contrato inalterados);
+- `RLCAP1 install cp=N` escrito com `fopen/fputs/fclose` puro **antes** de
+  qualquer STL/global/lock — a partir do `cp=1` (primeira instrução
+  efetiva): `1` entrou → `2` estado (`new ModuleState()` explícito, sem
+  magic static) → `3` log → `4` MinHook → `5`+`50–55` vtables (register-
+  class/window/probe HW/WARP/leitura/cleanup) → `60+i` por hook → `70`
+  enable → `80` ARMED;
+- log **ao lado da DLL** (nunca na pasta do jogo), fallback `%TEMP%`,
+  `RENDERLIFT_LOG` continua a mandar;
+- guarda SEH em toda a instalação: o filtro regista
+  `RLCAP1 seh phase=N code=0xXXXXXXXX addr=%p` (ExceptionAddress exato) e
+  devolve `0xE<fase><código>`; falhas normais `0x8000A001…A030` por passo.
+  Diagnóstico, não mascaramento: sucesso continua a significar 9 hooks
+  armados.
+
+**Leitura do próximo teste:** log até `cp=80` → armado; último `cp=N` +
+linha `seh` → passo e endereço exatos da falha; nem `cp=1` → falha na
+entrega da thread remota (fora do nosso init), move seguinte: stub de
+thread mínimo/injeção alternativa. Binários do lab: branch `dist-pack`
+(pack v3, build CI `35652290417`).
+
 ## 6. Roadmap da camada
 
 - **0.2 (esta)**: observação, classificação offline, inspector.

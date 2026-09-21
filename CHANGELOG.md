@@ -46,6 +46,30 @@ The engine inside the product — **ALRR Core** — keeps its own version and is
   aggregation, classifier rules incl. square/shadow atlases, integration
   modes, GTA V profile = observe) — 67 checks total.
 
+### Fixed — first GTA V live lab runs (2026-09-21, Legacy 1.0.3889.0)
+- **Loader export resolution**: `LoadLibraryExW(…DATAFILE) + GetProcAddress`
+  returned NULL against an intact export table (first live run failure).
+  The loader now parses the PE Export Directory itself (`findExportRva`) and
+  computes `remote VA = remote base + RVA`; CI enforces the export contract
+  (`RenderLiftInstall/Uninstall/FrameCount` present, unmangled) and
+  publishes the evidence file with every build.
+- **D3D11 module init crash** (`0xc0000005`, WER fault offset bit-exact with
+  the `RenderLiftInstall` entry VA, before any log line): install rewritten
+  "evidence-first" per ADR 0003 — exports now carry the exact thread-proc
+  shape `HRESULT WINAPI fn(LPVOID)`; durable `RLCAP1 install cp=N`
+  checkpoints from the first effective instruction (`fopen/fputs/fclose`,
+  no STL/globals/locks); `ModuleState` built explicitly (magic static
+  removed); log path next to the DLL (never the game dir) with `%TEMP%`
+  fallback; full install under an SEH guard whose filter records phase +
+  exception code + exact `ExceptionAddress` and returns a coded HRESULT
+  (`0xE<phase><code>`; ordinary failures `0x8000A001…A030`). Failure is
+  reported with evidence, never masked; success still means fully armed.
+  See `docs/research/d3d11-research-layer.md` §5.1 and
+  `docs/apis/d3d11.md` (install evidence protocol).
+- **CI dist-pack publish** is now additive (clone + refresh) instead of a
+  force-pushed orphan branch, so manually published lab zips/notes survive
+  subsequent runs.
+
 ### Added — 0.2 groundwork (hook engine + D3D11 module)
 - **MinHook 1.3.4 vendored** (`third_party/minhook`, BSD-2) — the D3D backend
   hook engine; notices updated.
