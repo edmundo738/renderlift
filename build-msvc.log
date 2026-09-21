@@ -1,0 +1,120 @@
+MSBuild version 18.9.1+a81b43525 for .NET Framework
+
+  1>Checking Build System
+  Building Custom Rule D:/a/renderlift/renderlift/third_party/minhook/CMakeLists.txt
+  buffer.c
+  Building Custom Rule D:/a/renderlift/renderlift/src/core/CMakeLists.txt
+  Building Custom Rule D:/a/renderlift/renderlift/tools/renderlift-loader/CMakeLists.txt
+  Json.cpp
+  main.cpp
+  GameProfile.cpp
+  hook.c
+  trampoline.c
+C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.51.36231\include\xutility(5094,18): warning C4244: '=': conversion from 'const wchar_t' to 'char', possible loss of data [D:\a\renderlift\renderlift\build\tools\renderlift-loader\renderlift-loader.vcxproj]
+  (compiling source file '../../../tools/renderlift-loader/main.cpp')
+      C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.51.36231\include\xutility(5094,18):
+      the template instantiation context (the oldest one first) is
+          D:\a\renderlift\renderlift\tools\renderlift-loader\main.cpp(278,20):
+          see reference to function template instantiation 'std::basic_string<char,std::char_traits<char>,std::allocator<char>> &std::basic_string<char,std::char_traits<char>,std::allocator<char>>::assign<std::_String_const_iterator<std::_String_val<std::_Simple_types<_Elem>>>,0>(const _Iter,const _Iter)' being compiled
+          with
+          [
+              _Elem=wchar_t,
+              _Iter=std::_String_const_iterator<std::_String_val<std::_Simple_types<wchar_t>>>
+          ]
+              D:\a\renderlift\renderlift\tools\renderlift-loader\main.cpp(278,26):
+              see the first reference to 'std::basic_string<char,std::char_traits<char>,std::allocator<char>>::assign' in 'wmain'
+          C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.51.36231\include\xstring(1686,32):
+          see reference to function template instantiation 'std::basic_string<char,std::char_traits<char>,std::allocator<char>>::basic_string<const wchar_t*,0>(_Iter,_Iter,const _Alloc &)' being compiled
+          with
+          [
+              _Iter=const wchar_t *,
+              _Alloc=std::allocator<char>
+          ]
+          C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.51.36231\include\xstring(862,17):
+          see reference to function template instantiation 'void std::basic_string<char,std::char_traits<char>,std::allocator<char>>::_Construct_from_iter<const wchar_t*,const wchar_t*,_Size_type>(_Iter,const _Sent,_Size)' being compiled
+          with
+          [
+              _Size_type=unsigned __int64,
+              _Iter=const wchar_t *,
+              _Sent=const wchar_t *,
+              _Size=unsigned __int64
+          ]
+          C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.51.36231\include\xstring(1018,18):
+          see reference to function template instantiation '_OutIt *std::_Copy_n_unchecked4<const wchar_t*,_Size,char*>(_InIt,_SizeTy,_OutIt)' being compiled
+          with
+          [
+              _OutIt=char *,
+              _Size=unsigned __int64,
+              _InIt=const wchar_t *,
+              _SizeTy=unsigned __int64
+          ]
+  
+  hde64.c
+  Generating Code...
+  renderlift-loader.vcxproj -> D:\a\renderlift\renderlift\build\bin\Release\RenderLift.Loader.exe
+  minhook.vcxproj -> D:\a\renderlift\renderlift\build\lib\Release\minhook.lib
+  Generating Code...
+  rl-core.vcxproj -> D:\a\renderlift\renderlift\build\lib\Release\rl-core.lib
+  Building Custom Rule D:/a/renderlift/renderlift/backends/CMakeLists.txt
+  Building Custom Rule D:/a/renderlift/renderlift/src/reconstruction/CMakeLists.txt
+  HookEngine.cpp
+  Building Custom Rule D:/a/renderlift/renderlift/src/resolution/CMakeLists.txt
+  Reconstruction.cpp
+  ResolutionManager.cpp
+  Steering.cpp
+  SpatialUpscaler.cpp
+  DynamicResolutionController.cpp
+  EdgeUpscaler.cpp
+  CaptureFormat.cpp
+  Generating Code...
+  rl-resolution.vcxproj -> D:\a\renderlift\renderlift\build\lib\Release\rl-resolution.lib
+  Generating Code...
+  FrameCapture.cpp
+  rl-reconstruction.vcxproj -> D:\a\renderlift\renderlift\build\lib\Release\rl-reconstruction.lib
+  ResourceClassifier.cpp
+D:\a\renderlift\renderlift\backends\common\src\obs\ResourceClassifier.cpp(85,49): warning C4305: 'initializing': truncation from 'double' to 'float' [D:\a\renderlift\renderlift\build\backends\rl-backend-common.vcxproj]
+D:\a\renderlift\renderlift\backends\common\src\obs\ResourceClassifier.cpp(89,56): warning C4305: 'initializing': truncation from 'double' to 'float' [D:\a\renderlift\renderlift\build\backends\rl-backend-common.vcxproj]
+  Generating Code...
+  rl-backend-common.vcxproj -> D:\a\renderlift\renderlift\build\lib\Release\rl-backend-common.lib
+  Building Custom Rule D:/a/renderlift/renderlift/backends/CMakeLists.txt
+  Building Custom Rule D:/a/renderlift/renderlift/backends/CMakeLists.txt
+  Building Custom Rule D:/a/renderlift/renderlift/backends/CMakeLists.txt
+  D3D9Backend.cpp
+  D3D12Backend.cpp
+  Building Custom Rule D:/a/renderlift/renderlift/backends/CMakeLists.txt
+  VulkanBackend.cpp
+  D3D11Module.cpp
+  Building Custom Rule D:/a/renderlift/renderlift/backends/CMakeLists.txt
+  Building Custom Rule D:/a/renderlift/renderlift/backends/CMakeLists.txt
+  D3D11Backend.cpp
+  rl-backend-d3d12.vcxproj -> D:\a\renderlift\renderlift\build\lib\Release\rl-backend-d3d12.lib
+  D3D10Backend.cpp
+  rl-backend-d3d9.vcxproj -> D:\a\renderlift\renderlift\build\lib\Release\rl-backend-d3d9.lib
+D:\a\renderlift\renderlift\backends\d3d11\src\win\D3D11Module.cpp(262,32): warning C4996: 'getenv': This function or variable may be unsafe. Consider using _dupenv_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details. [D:\a\renderlift\renderlift\build\backends\rl-backend-d3d11.vcxproj]
+  rl-backend-d3d11-kernel.vcxproj -> D:\a\renderlift\renderlift\build\lib\Release\rl-backend-d3d11-kernel.lib
+  rl-backend-vulkan.vcxproj -> D:\a\renderlift\renderlift\build\lib\Release\rl-backend-vulkan.lib
+  rl-backend-d3d10.vcxproj -> D:\a\renderlift\renderlift\build\lib\Release\rl-backend-d3d10.lib
+  Building Custom Rule D:/a/renderlift/renderlift/tools/renderlift-cli/CMakeLists.txt
+  Building Custom Rule D:/a/renderlift/renderlift/tests/CMakeLists.txt
+  test_main.cpp
+  main.cpp
+     Creating library D:/a/renderlift/renderlift/build/lib/Release/RenderLift.D3D11.lib and object D:/a/renderlift/renderlift/build/lib/Release/RenderLift.D3D11.exp
+  rl-backend-d3d11.vcxproj -> D:\a\renderlift\renderlift\build\bin\Release\RenderLift.D3D11.dll
+  test_types.cpp
+D:\a\renderlift\renderlift\tools\renderlift-cli\main.cpp(90,14): warning C4996: 'sscanf': This function or variable may be unsafe. Consider using sscanf_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details. [D:\a\renderlift\renderlift\build\tools\renderlift-cli\renderlift-cli.vcxproj]
+  test_json.cpp
+  renderlift-cli.vcxproj -> D:\a\renderlift\renderlift\build\bin\Release\RenderLift.CLI.exe
+  test_profiles.cpp
+  test_resolution_manager.cpp
+  test_dynamic_resolution.cpp
+  test_reconstruction.cpp
+  test_render_path.cpp
+  test_backends.cpp
+  test_vtable.cpp
+  test_steering.cpp
+  test_capture.cpp
+  test_classifier.cpp
+  test_integration.cpp
+  Generating Code...
+  renderlift-tests.vcxproj -> D:\a\renderlift\renderlift\build\bin\Release\renderlift-tests.exe
+  Building Custom Rule D:/a/renderlift/renderlift/CMakeLists.txt

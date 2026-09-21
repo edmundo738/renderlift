@@ -1,0 +1,24 @@
+-- Building for: Visual Studio 18 2026
+-- The C compiler identification is MSVC 19.51.36256.0
+-- The CXX compiler identification is MSVC 19.51.36256.0
+-- Detecting C compiler ABI info
+-- Detecting C compiler ABI info - done
+-- Check for working C compiler: C:/Program Files/Microsoft Visual Studio/18/Enterprise/VC/Tools/MSVC/14.51.36231/bin/Hostx64/x64/cl.exe - skipped
+-- Detecting C compile features
+-- Detecting C compile features - done
+-- Detecting CXX compiler ABI info
+-- Detecting CXX compiler ABI info - done
+-- Check for working CXX compiler: C:/Program Files/Microsoft Visual Studio/18/Enterprise/VC/Tools/MSVC/14.51.36231/bin/Hostx64/x64/cl.exe - skipped
+-- Detecting CXX compile features
+-- Detecting CXX compile features - done
+-- RenderLift.D3D11 will build as a SHARED module (real backend)
+-- RenderLift.Loader will build (Windows injection helper)
+-- 
+-- RenderLift 0.1.0 — ALRR Core 0.1.0
+--   tests ....... ON
+--   tools ....... ON
+--   backends .... ON
+-- 
+-- Configuring done (13.0s)
+-- Generating done (0.2s)
+-- Build files have been written to: D:/a/renderlift/renderlift/build
