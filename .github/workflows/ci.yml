@@ -78,22 +78,31 @@ jobs:
       - name: publish lab pack to dist-pack branch
         # The sandbox cannot reach Azure Blob storage (artifact downloads);
         # a plain git branch is the transport mechanism for binários + logs.
+        # ADDITIVE: keep manually published files (lab zips, LEIA-ME, notes)
+        # — clone the existing branch and only refresh the build outputs.
         if: always()
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force dist-pack | Out-Null
+          $repo = "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
+          if (Test-Path dist-pack) { Remove-Item -Recurse -Force dist-pack }
+          git clone -q --depth 1 --branch dist-pack $repo dist-pack 2>$null
+          if (-not (Test-Path dist-pack/.git)) {
+            New-Item -ItemType Directory -Force dist-pack | Out-Null
+            Push-Location dist-pack
+            git init -q
+            git checkout -q -b dist-pack
+            git remote add origin $repo
+            Pop-Location
+          }
           if (Test-Path build/bin/Release) { Copy-Item build/bin/Release/*.dll, build/bin/Release/*.exe dist-pack/ -ErrorAction SilentlyContinue }
           if (Test-Path build-msvc.log) { Copy-Item build-msvc.log dist-pack/ }
           if (Test-Path build-msvc-configure.log) { Copy-Item build-msvc-configure.log dist-pack/ }
           if (Test-Path RenderLift.D3D11.exports.txt) { Copy-Item RenderLift.D3D11.exports.txt dist-pack/ }
           "sha: $($env:GITHUB_SHA)`nrun: $($env:GITHUB_RUN_ID)" | Set-Content dist-pack/BUILD.txt
           Push-Location dist-pack
-          git init -q
           git config user.email "renderlift-ci@users.noreply.github.com"
           git config user.name "RenderLift CI"
-          git checkout -q -b dist-pack
           git add -A
           git commit -q -m "CI lab pack (run $($env:GITHUB_RUN_ID))" --allow-empty
-          git remote add origin "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
-          git push -q --force origin dist-pack
+          git push -q origin dist-pack
           Pop-Location
