@@ -49,6 +49,9 @@ if(WIN32)
     set_target_properties(rl-backend-d3d11 PROPERTIES OUTPUT_NAME "RenderLift.D3D11")
     target_link_libraries(rl-backend-d3d11 PRIVATE
         rl-backend-common RenderLift::MinHook d3d11 dxgi)
+    # dllexport switch for the module's own exports (CMake's auto
+    # rl_backend_d3d11_EXPORTS differs from the name we test with).
+    target_compile_definitions(rl-backend-d3d11 PRIVATE RENDERLIFT_D3D11_EXPORTS)
     message(STATUS "RenderLift.D3D11 will build as a SHARED module (real backend)")
 else()
     renderlift_backend(d3d11 d3d11/src/D3D11Backend.cpp)
