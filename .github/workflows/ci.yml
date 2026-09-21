@@ -43,7 +43,9 @@ jobs:
       - name: configure
         shell: pwsh
         run: |
-          cmd /c 'cmake -B build -G "Visual Studio 17 2022" -A x64 2>&1' | Tee-Object -FilePath build-msvc-configure.log
+          # windows-latest may ship any recent VS (2026 now) — let CMake pick
+          # the newest installed generator instead of pinning a version.
+          cmd /c 'cmake -B build 2>&1' | Tee-Object -FilePath build-msvc-configure.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: build
         shell: pwsh
