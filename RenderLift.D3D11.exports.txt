@@ -1,9 +1,10 @@
 file    : RenderLift.D3D11.dll
 size    : 84992 bytes
-sha256  : 9ca7fe8e6d50309457968f267db2611f59f8c60fe7720396a1714b3c9c50b4b0
+sha256  : 7e466fa26b895da386df80b78379fd50e494259b4a246b13e111c8d602821d54
 machine : x64  image_base=0x180000000
-exports : DLL name = RenderLift.D3D11.dll  functions=3 names=3
-  [   1] RenderLiftFrameCount             RVA=0x00005ed0  VA=0x180005ed0
-  [   2] RenderLiftInstall                RVA=0x00005ef0  VA=0x180005ef0
-  [   3] RenderLiftUninstall              RVA=0x00006100  VA=0x180006100
-total exports: 3
+exports : DLL name = RenderLift.D3D11.dll  functions=4 names=4
+  [   1] RenderLiftEntryProbe             RVA=0x00005ed0  VA=0x180005ed0
+  [   2] RenderLiftFrameCount             RVA=0x00005f60  VA=0x180005f60
+  [   3] RenderLiftInstall                RVA=0x00005f80  VA=0x180005f80
+  [   4] RenderLiftUninstall              RVA=0x00006190  VA=0x180006190
+total exports: 4
