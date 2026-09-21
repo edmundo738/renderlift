@@ -17,8 +17,13 @@
 
 #include "renderlift/RenderLift.hpp"
 #include "renderlift/backend/Registry.hpp"
+#include "renderlift/backend/obs/FrameCapture.hpp"
+#include "renderlift/backend/obs/ResourceClassifier.hpp"
 #include "renderlift/core/GameProfile.hpp"
 #include "renderlift/resolution/ProfilePlan.hpp"
+
+#include <algorithm>
+#include <fstream>
 
 namespace {
 
@@ -36,6 +41,7 @@ void printUsage() {
         "  RenderLift.CLI ladder   <WxH>            generic ladder for a display (e.g. 1366x768)\n"
         "  RenderLift.CLI simulate <profile.json> [--frames N]\n"
         "                                           run the dynamic-resolution simulator\n"
+        "  RenderLift.CLI inspect  <capture.log>    frame resource inspector (RLCAP1)\n"
         "  RenderLift.CLI backends                  list backend modules\n"
         "  RenderLift.CLI --help\n");
 }
@@ -160,6 +166,103 @@ int cmdSimulate(const char* path, int framesPerPhase) {
     return 0;
 }
 
+int cmdInspect(const char* path) {
+    namespace obs = rl::backend::obs;
+    std::ifstream in(path);
+    if (!in) {
+        std::fprintf(stderr, "error: cannot open capture '%s'\n", path);
+        return 1;
+    }
+
+    obs::FrameCapture capture;
+    std::string line;
+    std::uint64_t parsedLines = 0, skippedLines = 0;
+    while (std::getline(in, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (const auto event = obs::parseEvent(line)) {
+            capture.ingest(*event);
+            ++parsedLines;
+        } else if (!line.empty()) {
+            ++skippedLines;
+        }
+    }
+
+    const obs::CaptureContext& ctx = capture.context();
+    printBanner();
+    std::printf("capture ............... %s\n", path);
+    std::printf("events parsed ......... %llu (%llu skipped)\n",
+                static_cast<unsigned long long>(parsedLines),
+                static_cast<unsigned long long>(skippedLines));
+    std::printf("frames observed ....... %llu\n", static_cast<unsigned long long>(ctx.frames));
+    std::printf("display estimate ...... %ux%u (largest viewport)\n", ctx.displayEstimate.width,
+                ctx.displayEstimate.height);
+    std::printf("max draw calls/frame .. %llu\n\n",
+                static_cast<unsigned long long>(ctx.maxDrawCallsInFrame));
+
+    struct Row {
+        const obs::ResourceUsage* usage;
+        obs::ClassHint hint;
+    };
+    std::vector<Row> rows;
+    rows.reserve(capture.resources().size());
+    for (const auto& [id, usage] : capture.resources()) {
+        if (usage.created) rows.push_back({&usage, obs::classifyResource(usage, ctx)});
+    }
+    auto classOrder = [](rl::backend::obs::ResourceClass c) {
+        using RC = rl::backend::obs::ResourceClass;
+        switch (c) {
+            case RC::BackBufferLike:     return 0;
+            case RC::HdrSceneCandidate:  return 1;
+            case RC::GBufferCandidate:   return 2;
+            case RC::LdrPostTarget:      return 3;
+            case RC::DepthBuffer:        return 4;
+            case RC::ShadowMapCandidate: return 5;
+            case RC::DownsamplePass:     return 6;
+            case RC::Auxiliary:          return 7;
+            case RC::Texture:            return 8;
+            default:                     return 9;
+        }
+    };
+    std::sort(rows.begin(), rows.end(), [&](const Row& a, const Row& b) {
+        const int oa = classOrder(a.hint.cls), ob = classOrder(b.hint.cls);
+        if (oa != ob) return oa < ob;
+        return a.usage->info.width * static_cast<std::uint64_t>(a.usage->info.height) >
+               b.usage->info.width * static_cast<std::uint64_t>(b.usage->info.height);
+    });
+
+    std::printf("RESOURCES (%zu)\n", rows.size());
+    std::printf("%-14s %-16s %9s  %-22s %-9s %6s  REASON\n", "ID", "CLASS", "SIZE", "FORMAT",
+                "BIND", "F-BIND");
+    for (const Row& r : rows) {
+        const obs::TextureCreatedEvent& t = r.usage->info;
+        std::printf("0x%012llx %-16s %5ux%-5u %-22s %-9s %6llu  %s\n",
+                    static_cast<unsigned long long>(t.id),
+                    std::string(rl::backend::obs::toString(r.hint.cls)).c_str(), t.width,
+                    t.height, obs::dxgiFormatName(t.dxgiFormat).c_str(),
+                    obs::bindFlagsName(t.bindFlags).c_str(),
+                    static_cast<unsigned long long>(r.usage->framesBound),
+                    r.hint.reason.c_str());
+    }
+
+    // 0.3 preview: what the steering set would look like at each ladder rung.
+    std::uint32_t steerCandidates = 0;
+    for (const Row& r : rows) {
+        if (r.hint.cls == rl::backend::obs::ResourceClass::HdrSceneCandidate ||
+            r.hint.cls == rl::backend::obs::ResourceClass::GBufferCandidate ||
+            r.hint.cls == rl::backend::obs::ResourceClass::LdrPostTarget) {
+            ++steerCandidates;
+        }
+    }
+    std::printf("\nsteering candidates for mode 'steer' (0.3): %u display-sized color target(s)\n",
+                steerCandidates);
+    std::printf("UI/native candidates (keep at display res): %u backbuffer-like target(s)\n",
+                static_cast<unsigned>(std::count_if(
+                    rows.begin(), rows.end(), [](const Row& r) {
+                        return r.hint.cls == rl::backend::obs::ResourceClass::BackBufferLike;
+                    })));
+    return 0;
+}
+
 int cmdBackends() {
     printBanner();
     const auto all = rl::backend::createAllBackends();
@@ -187,6 +290,7 @@ int main(int argc, char** argv) {
     try {
         if (command == "profile" && argc >= 3) return cmdProfile(argv[2]);
         if (command == "ladder" && argc >= 3) return cmdLadder(argv[2]);
+        if (command == "inspect" && argc >= 3) return cmdInspect(argv[2]);
         if (command == "backends") return cmdBackends();
         if (command == "simulate" && argc >= 3) {
             int frames = 240;

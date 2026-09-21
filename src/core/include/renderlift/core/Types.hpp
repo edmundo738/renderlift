@@ -137,4 +137,39 @@ enum class Bottleneck : std::uint8_t {
     }
 }
 
+// ── Integration mode ────────────────────────────────────────────────────────
+//
+// The project's golden rule (ADR 0003): never alter rendering before being
+// able to observe it. A backend progresses through these modes per game:
+//
+//   observe      — log/classify everything, change NOTHING
+//   steer        — redirect scene targets to a FIXED internal resolution
+//   reconstruct  — steer + ALRR reconstruction + native-res UI
+//   full         — reconstruct + dynamic controller moves the ladder
+enum class IntegrationMode : std::uint8_t {
+    Observe,
+    Steer,
+    Reconstruct,
+    Full,
+};
+
+[[nodiscard]] inline std::string_view toString(IntegrationMode mode) noexcept {
+    switch (mode) {
+        case IntegrationMode::Observe:     return "observe";
+        case IntegrationMode::Steer:       return "steer";
+        case IntegrationMode::Reconstruct: return "reconstruct";
+        case IntegrationMode::Full:        return "full";
+        default:                           return "unknown";
+    }
+}
+
+[[nodiscard]] inline std::optional<IntegrationMode> integrationModeFromString(
+    std::string_view name) noexcept {
+    if (name == "observe")     return IntegrationMode::Observe;
+    if (name == "steer")       return IntegrationMode::Steer;
+    if (name == "reconstruct") return IntegrationMode::Reconstruct;
+    if (name == "full")        return IntegrationMode::Full;
+    return std::nullopt;
+}
+
 }  // namespace rl

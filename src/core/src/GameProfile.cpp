@@ -92,6 +92,19 @@ GameProfile GameProfile::fromJson(const json::Value& root) {
         }
     }
 
+    if (const json::Value* integration = root.find("integration")) {
+        const std::string mode = integration->stringOr("mode", "observe");
+        const auto parsedMode = integrationModeFromString(mode);
+        if (!parsedMode.has_value()) {
+            profileError(p.id, "unknown integration mode '" + mode + "'");
+        }
+        p.integration.mode = *parsedMode;
+        p.integration.observationFrames =
+            static_cast<std::uint32_t>(integration->numberOr("observationFrames", 600.0));
+    }
+
+    // Dynamic resolution only does something in the "full" integration mode;
+    // enabled=true under an earlier mode is accepted but documented as inert.
     return p;
 }
 

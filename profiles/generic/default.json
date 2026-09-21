@@ -10,6 +10,10 @@
     "mode": "edge",
     "sharpening": 0.35
   },
+  "integration": {
+    "mode": "observe",
+    "observationFrames": 600
+  },
   "dynamicResolution": {
     "enabled": true,
     "targetFps": 30,

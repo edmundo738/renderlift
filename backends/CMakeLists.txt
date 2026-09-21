@@ -6,9 +6,15 @@
 # (0.2: hook install + measured passthrough; 0.3: full steering); other
 # backends remain registry stubs until their wave.
 
+# The observation layer (obs/) is the D3D11 Research Layer shared by the
+# real backends and the offline inspector — platform-neutral and testable
+# everywhere.
 add_library(rl-backend-common STATIC
     common/src/HookEngine.cpp
     common/src/Steering.cpp
+    common/src/obs/CaptureFormat.cpp
+    common/src/obs/FrameCapture.cpp
+    common/src/obs/ResourceClassifier.cpp
 )
 add_library(RenderLift::Backend.Common ALIAS rl-backend-common)
 

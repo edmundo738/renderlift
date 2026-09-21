@@ -17,6 +17,7 @@ PROFILES = REPO_ROOT / "profiles"
 
 APIS = {"auto", "d3d9", "d3d10", "d3d11", "d3d12", "vulkan"}
 RECON_MODES = {"spatial", "edge", "nis", "temporal"}
+INTEGRATION_MODES = {"observe", "steer", "reconstruct", "full"}
 HW_CLASSES = {"integrated", "discrete"}
 
 errors: list[str] = []
@@ -78,11 +79,34 @@ def check_game_profile(path: Path, doc: dict) -> None:
         if not isinstance(sharpening, (int, float)) or not 0.0 <= sharpening <= 1.0:
             fail(path, f"sharpening {sharpening!r} out of [0,1]")
 
+    integration = doc.get("integration", {})
+    if not isinstance(integration, dict):
+        fail(path, "integration must be an object")
+    else:
+        mode = integration.get("mode", "observe")
+        if mode not in INTEGRATION_MODES:
+            fail(path, f"unknown integration mode '{mode}'")
+        frames = integration.get("observationFrames", 600)
+        if not isinstance(frames, int) or frames < 0:
+            fail(path, "observationFrames must be a non-negative integer")
+
     dyn = doc.get("dynamicResolution", {})
     if not isinstance(dyn, dict):
         fail(path, "dynamicResolution must be an object")
     elif isinstance(dyn.get("targetFps"), (int, float)) and dyn["targetFps"] <= 1:
         fail(path, "dynamicResolution.targetFps must be > 1")
+
+    # Advisory (not an error): DRS is inert until the "full" mode.
+    if (
+        isinstance(integration, dict)
+        and integration.get("mode", "observe") != "full"
+        and isinstance(dyn, dict)
+        and dyn.get("enabled") is True
+    ):
+        print(
+            f"  · note: {path.relative_to(REPO_ROOT)}: dynamicResolution stays inert "
+            f"until integration.mode='full'"
+        )
 
 
 def check_hardware_profile(path: Path, doc: dict) -> None:

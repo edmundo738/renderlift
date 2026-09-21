@@ -32,6 +32,13 @@ struct DynamicResolutionSettings {
     std::uint32_t cooldownFrames = 45;  // min frames between ladder changes
 };
 
+// How far the backend is allowed to integrate for this title (ADR 0003).
+struct IntegrationSettings {
+    IntegrationMode mode = IntegrationMode::Observe;
+    // In observe mode: stop logging after this many frames (0 = unlimited).
+    std::uint32_t observationFrames = 600;
+};
+
 struct GameProfile {
     // Schema identifier, e.g. "renderlift/game-profile@1".
     std::string schema;
@@ -56,6 +63,7 @@ struct GameProfile {
 
     ReconstructionSettings reconstruction{};
     DynamicResolutionSettings dynamicResolution{};
+    IntegrationSettings integration{};
 
     // Loads a profile from an already-parsed JSON document.
     // Throws std::runtime_error on missing/invalid required fields.

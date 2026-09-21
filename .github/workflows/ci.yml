@@ -47,7 +47,8 @@ jobs:
       - name: cli smoke
         run: |
           ./build/bin/Release/RenderLift.CLI.exe simulate profiles/games/grand-theft-auto-v.json --frames 240
-      - name: verify RenderLift.D3D11 module
+      - name: verify RenderLift.D3D11 module + loader
         run: |
           if (-not (Test-Path ./build/bin/Release/RenderLift.D3D11.dll)) { throw "RenderLift.D3D11.dll was not produced" }
-          Write-Host "RenderLift.D3D11.dll produced OK"
+          if (-not (Test-Path ./build/bin/Release/RenderLift.Loader.exe)) { throw "RenderLift.Loader.exe was not produced" }
+          Write-Host "RenderLift.D3D11.dll + RenderLift.Loader.exe produced OK"

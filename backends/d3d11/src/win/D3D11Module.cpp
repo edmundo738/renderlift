@@ -1,20 +1,24 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// RenderLift — D3D11 module (Windows-only translation unit).
+// RenderLift — D3D11 module (Windows-only translation unit). RESEARCH LAYER.
 //
-// Compiled into RenderLift.D3D11.dll on Windows. Two halves:
+// Current integration mode: OBSERVE (ADR 0003 — never alter rendering before
+// being able to observe it). Every detour below is a measured passthrough:
+// it records what the game does into an RLCAP1 capture log and returns
+// control to the original function untouched.
 //
-//   1. Bootstrap: build a throwaway device + swap chain on a hidden window so
-//      we can read the real, driver-filled vtables and learn the process-wide
-//      addresses of Present/ResizeBuffers (classic, reliable bootstrap).
-//   2. Interception: MinHook detours on those addresses. 0.2 installs
-//      measured passthroughs (frame boundary + swap-chain-observed display
-//      tracking feeding a SteeringPolicy); 0.3 wires CreateTexture2D /
-//      RSSetViewports / OMSetRenderTargets so the 3D scene truly renders at
-//      the internal resolution, with the ALRR compute pass before UI.
+// Observed surface:
+//   ID3D11Device:        CreateTexture2D(5) · CreateRenderTargetView(9)
+//                        CreateDepthStencilView(10)
+//   ID3D11DeviceContext: DrawIndexed(12) · Draw(13) · OMSetRenderTargets(33)
+//                        RSSetViewports(44)        (aggregated per frame)
+//   IDXGISwapChain:      Present(8) · ResizeBuffers(13)
 //
-// Injection contract: the loader (RenderLift.exe) LoadLibrary()s this DLL and
-// calls RenderLiftInstall once the game is running — never hook from DllMain
-// (loader lock). RenderLiftUninstall is the safeunload path.
+// Output: "RenderLift.D3D11.log" (RLCAP1 lines) — inspect offline with:
+//   RenderLift.CLI inspect RenderLift.D3D11.log
+//
+// Env overrides: RENDERLIFT_LOG (path) · RENDERLIFT_OBSERVE_FRAMES (cap).
+// Injection contract: loader LoadLibrary()s the DLL, calls RenderLiftInstall
+// once the game is up — never hook from DllMain (loader lock).
 // ─────────────────────────────────────────────────────────────────────────────
 
 #if !defined(_WIN32)
@@ -29,12 +33,16 @@
 #include <dxgi.h>
 
 #include "renderlift/backend/HookEngine.hpp"
-#include "renderlift/backend/Steering.hpp"
 #include "renderlift/backend/VTable.hpp"
+#include "renderlift/backend/obs/CaptureFormat.hpp"
 
+#include <atomic>
 #include <cstdint>
+#include <cstdlib>
+#include <fstream>
 #include <memory>
 #include <mutex>
+#include <string>
 
 #pragma comment(lib, "d3d11.lib")
 #pragma comment(lib, "dxgi.lib")
@@ -48,31 +56,124 @@
 namespace rl::backend {
 namespace {
 
-// IDXGISwapChain vtable slots — stable ABI across all D3D11-era drivers.
-// (IUnknown 0-2 · IDXGIObject 3-6 · IDXGIDeviceSubObject::GetDevice 7 · then:)
-constexpr std::size_t kSlotPresent = 8;
-constexpr std::size_t kSlotResizeBuffers = 13;
+namespace obs = rl::backend::obs;
+
+// ── Vtable slots (stable COM ABI; see docs/apis/d3d11.md) ───────────────────
+namespace slot {
+// IDXGISwapChain
+constexpr std::size_t Present = 8;
+constexpr std::size_t ResizeBuffers = 13;
+// ID3D11Device (IUnknown 0-2 · CreateBuffer 3 · CreateTexture1D 4)
+constexpr std::size_t CreateTexture2D = 5;
+constexpr std::size_t CreateRenderTargetView = 9;
+constexpr std::size_t CreateDepthStencilView = 10;
+// ID3D11DeviceContext (IUnknown 0-2 · ID3D11DeviceChild 3-6 · VSSetConstantBuffers 7)
+constexpr std::size_t DrawIndexed = 12;
+constexpr std::size_t Draw = 13;
+constexpr std::size_t OMSetRenderTargets = 33;
+constexpr std::size_t RSSetViewports = 44;
+}  // namespace slot
 
 using PresentFn = HRESULT(STDMETHODCALLTYPE*)(IDXGISwapChain*, UINT, UINT);
 using ResizeBuffersFn = HRESULT(STDMETHODCALLTYPE*)(IDXGISwapChain*, UINT, UINT, UINT,
                                                     DXGI_FORMAT, UINT);
+using CreateTexture2DFn = HRESULT(STDMETHODCALLTYPE*)(ID3D11Device*,
+                                                      const D3D11_TEXTURE2D_DESC*,
+                                                      const D3D11_SUBRESOURCE_DATA*,
+                                                      ID3D11Texture2D**);
+using CreateRtvFn = HRESULT(STDMETHODCALLTYPE*)(ID3D11Device*, ID3D11Resource*,
+                                                const D3D11_RENDER_TARGET_VIEW_DESC*,
+                                                ID3D11RenderTargetView**);
+using CreateDsvFn = HRESULT(STDMETHODCALLTYPE*)(ID3D11Device*, ID3D11Resource*,
+                                                const D3D11_DEPTH_STENCIL_VIEW_DESC*,
+                                                ID3D11DepthStencilView**);
+using DrawIndexedFn = void(STDMETHODCALLTYPE*)(ID3D11DeviceContext*, UINT, UINT, INT);
+using DrawFn = void(STDMETHODCALLTYPE*)(ID3D11DeviceContext*, UINT, UINT);
+using OMSetRenderTargetsFn = void(STDMETHODCALLTYPE*)(ID3D11DeviceContext*, UINT,
+                                                      ID3D11RenderTargetView* const*,
+                                                      ID3D11DepthStencilView*);
+using RSSetViewportsFn = void(STDMETHODCALLTYPE*)(ID3D11DeviceContext*, UINT,
+                                                  const D3D11_VIEWPORT*);
+
+// ── Capture log: one mutex, one file, flushed periodically ──────────────────
+
+class CaptureLog {
+public:
+    bool open() {
+        const char* fromEnv = std::getenv("RENDERLIFT_LOG");
+        const std::string path = (fromEnv != nullptr && fromEnv[0] != '\0')
+                                     ? fromEnv
+                                     : "RenderLift.D3D11.log";
+        out_.open(path, std::ios::out | std::ios::trunc);
+        return out_.is_open();
+    }
+
+    void write(const obs::Event& event) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!out_.is_open()) return;
+        out_ << obs::formatEvent(event) << '\n';
+        if (++sinceFlush_ >= 128) {
+            sinceFlush_ = 0;
+            out_.flush();
+        }
+    }
+
+    void writeView(bool dsv, const obs::ViewCreatedEvent& e) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!out_.is_open()) return;
+        out_ << (dsv ? obs::formatDsvCreated(e) : obs::formatRtvCreated(e)) << '\n';
+        if (++sinceFlush_ >= 128) {
+            sinceFlush_ = 0;
+            out_.flush();
+        }
+    }
+
+    void writeRaw(const std::string& line) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!out_.is_open()) return;
+        out_ << line << '\n';
+    }
+
+    void flush() {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (out_.is_open()) out_.flush();
+    }
+
+private:
+    std::mutex mutex_;
+    std::ofstream out_;
+    std::uint32_t sinceFlush_ = 0;
+};
 
 // ── Module state ────────────────────────────────────────────────────────────
 
+struct FrameDrawCounters {
+    std::uint32_t calls = 0;
+    std::uint32_t maxIndices = 0;
+    std::uint32_t maxVertices = 0;
+};
+
 struct ModuleState {
-    std::mutex mutex;
+    std::mutex mutex;    // guards the non-atomic members below
     std::unique_ptr<IHookEngine> hooks;
+    CaptureLog log;
 
     PresentFn originalPresent = nullptr;
     ResizeBuffersFn originalResizeBuffers = nullptr;
+    CreateTexture2DFn originalCreateTexture2D = nullptr;
+    CreateRtvFn originalCreateRtv = nullptr;
+    CreateDsvFn originalCreateDsv = nullptr;
+    DrawIndexedFn originalDrawIndexed = nullptr;
+    DrawFn originalDraw = nullptr;
+    OMSetRenderTargetsFn originalOMSetRenderTargets = nullptr;
+    RSSetViewportsFn originalRSSetViewports = nullptr;
 
     bool installed = false;
-    std::uint64_t presentCount = 0;          // frame counter (per-frame boundary)
-    Resolution observedDisplay{};            // from swap-chain desc / ResizeBuffers
-
-    // Steering defaults until profile plumbing arrives (0.3): generic ladder
-    // at 1366×768 with the controller free to move the rung.
-    std::unique_ptr<SteeringPolicy> steering;
+    std::atomic<bool> observing{false};  // read on the hot path without the mutex
+    std::uint64_t frame = 0;
+    std::uint32_t observationCap = 600;  // frames; 0 = unlimited
+    std::uint64_t presentCount = 0;
+    FrameDrawCounters draw;
 };
 
 ModuleState& state() {
@@ -80,11 +181,26 @@ ModuleState& state() {
     return s;
 }
 
+std::uint32_t observationCapFromEnv() {
+    if (const char* env = std::getenv("RENDERLIFT_OBSERVE_FRAMES")) {
+        const unsigned long v = std::strtoul(env, nullptr, 10);
+        return static_cast<std::uint32_t>(v);
+    }
+    return 600;
+}
+
 // ── Vtable bootstrap ────────────────────────────────────────────────────────
 
-struct SwapChainVtable {
+struct Vtables {
     void* present = nullptr;
     void* resizeBuffers = nullptr;
+    void* createTexture2D = nullptr;
+    void* createRtv = nullptr;
+    void* createDsv = nullptr;
+    void* drawIndexed = nullptr;
+    void* draw = nullptr;
+    void* omSetRenderTargets = nullptr;
+    void* rsSetViewports = nullptr;
 };
 
 bool tryCreateProbe(D3D_DRIVER_TYPE driverType, HWND hwnd, IDXGISwapChain** swapchainOut,
@@ -105,16 +221,13 @@ bool tryCreateProbe(D3D_DRIVER_TYPE driverType, HWND hwnd, IDXGISwapChain** swap
                                                    deviceOut, nullptr, contextOut));
 }
 
-// Creates a throwaway device + swap chain on a hidden window and reads the
-// interface vtable. Tries hardware first (real driver layout), falls back to
-// WARP (headless machines / CI).
-bool resolveSwapChainVtable(SwapChainVtable& out) {
+bool resolveVtables(Vtables& out) {
     WNDCLASSEXW windowClass{};
     windowClass.cbSize = sizeof(windowClass);
     windowClass.lpfnWndProc = DefWindowProcW;
     windowClass.hInstance = GetModuleHandleW(nullptr);
     windowClass.lpszClassName = L"RenderLiftD3D11Probe";
-    (void)RegisterClassExW(&windowClass);  // fine if already registered
+    (void)RegisterClassExW(&windowClass);
 
     HWND hwnd = CreateWindowExW(0, windowClass.lpszClassName, L"RenderLift",
                                 WS_DISABLED | WS_POPUP, 0, 0, 8, 8, nullptr, nullptr,
@@ -124,14 +237,26 @@ bool resolveSwapChainVtable(SwapChainVtable& out) {
     IDXGISwapChain* swapchain = nullptr;
     ID3D11Device* device = nullptr;
     ID3D11DeviceContext* context = nullptr;
-    bool ok = tryCreateProbe(D3D_DRIVER_TYPE_HARDWARE, hwnd, &swapchain, &device, &context) ||
-              tryCreateProbe(D3D_DRIVER_TYPE_WARP, hwnd, &swapchain, &device, &context);
+    const bool created =
+        tryCreateProbe(D3D_DRIVER_TYPE_HARDWARE, hwnd, &swapchain, &device, &context) ||
+        tryCreateProbe(D3D_DRIVER_TYPE_WARP, hwnd, &swapchain, &device, &context);
 
-    if (ok) {
-        const VTable vt(swapchain);
-        out.present = vt.functionAt(kSlotPresent);
-        out.resizeBuffers = vt.functionAt(kSlotResizeBuffers);
-        ok = out.present != nullptr && out.resizeBuffers != nullptr;
+    bool ok = false;
+    if (created) {
+        const VTable sc(swapchain);
+        const VTable dev(device);
+        const VTable ctx(context);
+        out.present = sc.functionAt(slot::Present);
+        out.resizeBuffers = sc.functionAt(slot::ResizeBuffers);
+        out.createTexture2D = dev.functionAt(slot::CreateTexture2D);
+        out.createRtv = dev.functionAt(slot::CreateRenderTargetView);
+        out.createDsv = dev.functionAt(slot::CreateDepthStencilView);
+        out.drawIndexed = ctx.functionAt(slot::DrawIndexed);
+        out.draw = ctx.functionAt(slot::Draw);
+        out.omSetRenderTargets = ctx.functionAt(slot::OMSetRenderTargets);
+        out.rsSetViewports = ctx.functionAt(slot::RSSetViewports);
+        ok = out.present && out.resizeBuffers && out.createTexture2D && out.createRtv &&
+             out.omSetRenderTargets && out.rsSetViewports;
     }
 
     if (context != nullptr) context->Release();
@@ -142,66 +267,228 @@ bool resolveSwapChainVtable(SwapChainVtable& out) {
     return ok;
 }
 
-// ── Detours (0.2: measured passthrough + display tracking) ──────────────────
+// ── Detours (observation-only) ──────────────────────────────────────────────
 
-HRESULT STDMETHODCALLTYPE Present_Hook(IDXGISwapChain* swapchain, UINT syncInterval, UINT flags) {
+bool observing() { return state().observing.load(std::memory_order_relaxed); }
+
+// Draw* are the hottest hooks in the game — counting is all they may do.
+void STDMETHODCALLTYPE DrawIndexed_Hook(ID3D11DeviceContext* ctx, UINT indexCount,
+                                        UINT startIndexLocation, INT baseVertexLocation) {
+    ModuleState& s = state();
+    if (observing()) {
+        std::lock_guard<std::mutex> lock(s.mutex);
+        ++s.draw.calls;
+        if (indexCount > s.draw.maxIndices) s.draw.maxIndices = indexCount;
+    }
+    s.originalDrawIndexed(ctx, indexCount, startIndexLocation, baseVertexLocation);
+}
+
+void STDMETHODCALLTYPE Draw_Hook(ID3D11DeviceContext* ctx, UINT vertexCount,
+                                 UINT startVertexLocation) {
+    ModuleState& s = state();
+    if (observing()) {
+        std::lock_guard<std::mutex> lock(s.mutex);
+        ++s.draw.calls;
+        if (vertexCount > s.draw.maxVertices) s.draw.maxVertices = vertexCount;
+    }
+    s.originalDraw(ctx, vertexCount, startVertexLocation);
+}
+
+void STDMETHODCALLTYPE OMSetRenderTargets_Hook(ID3D11DeviceContext* ctx, UINT numViews,
+                                               ID3D11RenderTargetView* const* ppRtv,
+                                               ID3D11DepthStencilView* pDsv) {
+    ModuleState& s = state();
+    if (observing()) {
+        obs::RenderTargetsEvent e{};
+        e.context = reinterpret_cast<std::uint64_t>(ctx);
+        e.count = (numViews > obs::kMaxRtvs) ? obs::kMaxRtvs : numViews;
+        for (UINT i = 0; i < e.count && ppRtv != nullptr; ++i) {
+            e.rtvs[i] = reinterpret_cast<std::uint64_t>(ppRtv[i]);
+        }
+        e.dsv = reinterpret_cast<std::uint64_t>(pDsv);
+        s.log.write(e);
+    }
+    s.originalOMSetRenderTargets(ctx, numViews, ppRtv, pDsv);
+}
+
+void STDMETHODCALLTYPE RSSetViewports_Hook(ID3D11DeviceContext* ctx, UINT numViewports,
+                                           const D3D11_VIEWPORT* pViewports) {
+    ModuleState& s = state();
+    if (observing() && pViewports != nullptr && numViewports > 0) {
+        obs::ViewportEvent e{};
+        e.context = reinterpret_cast<std::uint64_t>(ctx);
+        e.count = numViewports;
+        e.x = pViewports[0].TopLeftX;
+        e.y = pViewports[0].TopLeftY;
+        e.w = pViewports[0].Width;
+        e.h = pViewports[0].Height;
+        s.log.write(e);
+    }
+    s.originalRSSetViewports(ctx, numViewports, pViewports);
+}
+
+HRESULT STDMETHODCALLTYPE CreateTexture2D_Hook(ID3D11Device* dev,
+                                               const D3D11_TEXTURE2D_DESC* pDesc,
+                                               const D3D11_SUBRESOURCE_DATA* pInitialData,
+                                               ID3D11Texture2D** ppTexture2D) {
+    ModuleState& s = state();
+    const HRESULT hr = s.originalCreateTexture2D(dev, pDesc, pInitialData, ppTexture2D);
+    if (observing() && SUCCEEDED(hr) && ppTexture2D != nullptr && *ppTexture2D != nullptr) {
+        D3D11_TEXTURE2D_DESC desc{};
+        (*ppTexture2D)->GetDesc(&desc);
+        obs::TextureCreatedEvent e{};
+        e.device = reinterpret_cast<std::uint64_t>(dev);
+        e.id = reinterpret_cast<std::uint64_t>(*ppTexture2D);
+        e.width = desc.Width;
+        e.height = desc.Height;
+        e.dxgiFormat = static_cast<std::uint32_t>(desc.Format);
+        e.bindFlags = desc.BindFlags;
+        e.mipLevels = desc.MipLevels;
+        e.arraySize = desc.ArraySize;
+        e.samples = desc.SampleDesc.Count;
+        s.log.write(e);
+    }
+    return hr;
+}
+
+HRESULT STDMETHODCALLTYPE CreateRtv_Hook(ID3D11Device* dev, ID3D11Resource* pResource,
+                                         const D3D11_RENDER_TARGET_VIEW_DESC* pDesc,
+                                         ID3D11RenderTargetView** ppRTView) {
+    ModuleState& s = state();
+    const HRESULT hr = s.originalCreateRtv(dev, pResource, pDesc, ppRTView);
+    if (observing() && SUCCEEDED(hr) && ppRTView != nullptr && *ppRTView != nullptr) {
+        obs::ViewCreatedEvent e{};
+        e.device = reinterpret_cast<std::uint64_t>(dev);
+        e.viewId = reinterpret_cast<std::uint64_t>(*ppRTView);
+        e.resourceId = reinterpret_cast<std::uint64_t>(pResource);
+        s.log.writeView(/*dsv=*/false, e);
+    }
+    return hr;
+}
+
+HRESULT STDMETHODCALLTYPE CreateDsv_Hook(ID3D11Device* dev, ID3D11Resource* pResource,
+                                         const D3D11_DEPTH_STENCIL_VIEW_DESC* pDesc,
+                                         ID3D11DepthStencilView** ppDSView) {
+    ModuleState& s = state();
+    const HRESULT hr = s.originalCreateDsv(dev, pResource, pDesc, ppDSView);
+    if (observing() && SUCCEEDED(hr) && ppDSView != nullptr && *ppDSView != nullptr) {
+        obs::ViewCreatedEvent e{};
+        e.device = reinterpret_cast<std::uint64_t>(dev);
+        e.viewId = reinterpret_cast<std::uint64_t>(*ppDSView);
+        e.resourceId = reinterpret_cast<std::uint64_t>(pResource);
+        s.log.writeView(/*dsv=*/true, e);
+    }
+    return hr;
+}
+
+HRESULT STDMETHODCALLTYPE Present_Hook(IDXGISwapChain* swapchain, UINT syncInterval,
+                                       UINT flags) {
     ModuleState& s = state();
     {
         std::lock_guard<std::mutex> lock(s.mutex);
+        ++s.frame;
         ++s.presentCount;
 
-        // Learn the real display resolution from the swap chain itself.
-        DXGI_SWAP_CHAIN_DESC desc{};
-        if (SUCCEEDED(swapchain->GetDesc(&desc))) {
-            s.observedDisplay = Resolution{desc.BufferDesc.Width, desc.BufferDesc.Height};
+        if (s.observing) {
+            // Per-frame aggregate first, then the frame marker.
+            obs::DrawStatEvent stat{};
+            stat.frame = s.frame;
+            stat.calls = s.draw.calls;
+            stat.maxIndices = s.draw.maxIndices;
+            stat.maxVertices = s.draw.maxVertices;
+            s.log.write(stat);
+
+            obs::PresentEvent e{};
+            e.swapchain = reinterpret_cast<std::uint64_t>(swapchain);
+            e.frame = s.frame;
+            s.log.write(e);
+
+            if (s.frame % 30 == 0) s.log.flush();
+
+            if (s.observationCap > 0 && s.frame >= s.observationCap) {
+                s.log.writeRaw("RLCAP1 cap frames=" + std::to_string(s.frame));
+                s.log.flush();
+                s.observing = false;  // passthrough overhead drops to ~nothing
+            }
         }
-        // 0.3: reconstruction dispatch happens HERE, between the game's last
-        // scene draw and Present:
-        //   steering→internalResolution() chooses the current ladder rung;
-        //   ALRR compute: internal target → swap-chain backbuffer;
-        //   UI pass stays native; frame timing feeds the dynamic controller.
+        s.draw = FrameDrawCounters{};
     }
     return s.originalPresent(swapchain, syncInterval, flags);
 }
 
 HRESULT STDMETHODCALLTYPE ResizeBuffers_Hook(IDXGISwapChain* swapchain, UINT bufferCount,
                                              UINT width, UINT height, DXGI_FORMAT format,
-                                             UINT flags) {
+                                             UINT swapchainFlags) {
     ModuleState& s = state();
-    {
-        std::lock_guard<std::mutex> lock(s.mutex);
-        s.observedDisplay = Resolution{width, height};
-        // 0.3: re-derive the ladder for the new display resolution and reset
-        // the steering policy before the chain reallocates.
+    if (s.observing) {
+        s.log.writeRaw("RLCAP1 resize w=" + std::to_string(width) +
+                       " h=" + std::to_string(height));
     }
-    return s.originalResizeBuffers(swapchain, bufferCount, width, height, format, flags);
+    return s.originalResizeBuffers(swapchain, bufferCount, width, height, format,
+                                   swapchainFlags);
+}
+
+// ── Install / uninstall ─────────────────────────────────────────────────────
+
+HookStatus createHook(ModuleState& s, void* target, void* detour, void** original) {
+    return s.hooks->create(target, detour, original);
 }
 
 HRESULT installLocked(ModuleState& s) {
-    SwapChainVtable vt;
-    if (!resolveSwapChainVtable(vt)) return E_FAIL;
+    Vtables vt;
+    if (!resolveVtables(vt)) return E_FAIL;
 
-    if (!succeeded(s.hooks->create(vt.present, reinterpret_cast<void*>(&Present_Hook),
-                                   reinterpret_cast<void**>(&s.originalPresent)))) {
-        return E_FAIL;
-    }
-    if (!succeeded(s.hooks->create(vt.resizeBuffers, reinterpret_cast<void*>(&ResizeBuffers_Hook),
-                                   reinterpret_cast<void**>(&s.originalResizeBuffers)))) {
-        return E_FAIL;
+    struct Install {
+        void* target;
+        void* detour;
+        void** original;
+    };
+    const Install installs[] = {
+        {vt.present, reinterpret_cast<void*>(&Present_Hook},
+         reinterpret_cast<void**>(&s.originalPresent)},
+        {vt.resizeBuffers, reinterpret_cast<void*>(&ResizeBuffers_Hook},
+         reinterpret_cast<void**>(&s.originalResizeBuffers)},
+        {vt.createTexture2D, reinterpret_cast<void*>(&CreateTexture2D_Hook},
+         reinterpret_cast<void**>(&s.originalCreateTexture2D)},
+        {vt.createRtv, reinterpret_cast<void*>(&CreateRtv_Hook},
+         reinterpret_cast<void**>(&s.originalCreateRtv)},
+        {vt.createDsv, reinterpret_cast<void*>(&CreateDsv_Hook},
+         reinterpret_cast<void**>(&s.originalCreateDsv)},
+        {vt.drawIndexed, reinterpret_cast<void*>(&DrawIndexed_Hook},
+         reinterpret_cast<void**>(&s.originalDrawIndexed)},
+        {vt.draw, reinterpret_cast<void*>(&Draw_Hook), reinterpret_cast<void**>(&s.originalDraw)},
+        {vt.omSetRenderTargets, reinterpret_cast<void*>(&OMSetRenderTargets_Hook},
+         reinterpret_cast<void**>(&s.originalOMSetRenderTargets)},
+        {vt.rsSetViewports, reinterpret_cast<void*>(&RSSetViewports_Hook},
+         reinterpret_cast<void**>(&s.originalRSSetViewports)},
+    };
+    for (const Install& i : installs) {
+        if (i.target == nullptr) continue;
+        if (!succeeded(createHook(s, i.target, i.detour, i.original))) return E_FAIL;
     }
     if (!succeeded(s.hooks->enableAll())) return E_FAIL;
 
+    s.observing = true;
     s.installed = true;
     return S_OK;
 }
 
 HRESULT uninstallLocked(ModuleState& s) {
+    s.observing = false;
     if (s.hooks) {
         s.hooks->shutdown();
         s.hooks.reset();
     }
     s.originalPresent = nullptr;
     s.originalResizeBuffers = nullptr;
+    s.originalCreateTexture2D = nullptr;
+    s.originalCreateRtv = nullptr;
+    s.originalCreateDsv = nullptr;
+    s.originalDrawIndexed = nullptr;
+    s.originalDraw = nullptr;
+    s.originalOMSetRenderTargets = nullptr;
+    s.originalRSSetViewports = nullptr;
+    s.log.flush();
     s.installed = false;
     return S_OK;
 }
@@ -213,7 +500,6 @@ HRESULT uninstallLocked(ModuleState& s) {
 
 extern "C" {
 
-// Called by the loader (RenderLift.exe) once the game process is up.
 RENDERLIFT_D3D11_API HRESULT RenderLiftInstall(void) {
     rl::backend::ModuleState& s = rl::backend::state();
     std::lock_guard<std::mutex> lock(s.mutex);
@@ -224,16 +510,25 @@ RENDERLIFT_D3D11_API HRESULT RenderLiftInstall(void) {
         s.hooks.reset();
         return E_FAIL;
     }
+    if (!s.log.open()) {
+        // Best effort: observation without a file log is still useful for the
+        // frame counter, but report failure so the loader can react.
+        return HRESULT_FROM_WIN32(ERROR_ACCESS_DENIED);
+    }
+    s.observationCap = rl::backend::observationCapFromEnv();
+    s.log.writeRaw("RLCAP1 hello module=RenderLift.D3D11 mode=observe cap=" +
+                   std::to_string(s.observationCap));
     return rl::backend::installLocked(s);
 }
 
 RENDERLIFT_D3D11_API HRESULT RenderLiftUninstall(void) {
     rl::backend::ModuleState& s = rl::backend::state();
     std::lock_guard<std::mutex> lock(s.mutex);
+    s.log.writeRaw("RLCAP1 bye frames=" + std::to_string(s.frame));
+    s.log.flush();
     return rl::backend::uninstallLocked(s);
 }
 
-// Diagnostic for the loader/overlay: how many presents flowed through.
 RENDERLIFT_D3D11_API std::uint64_t RenderLiftFrameCount(void) {
     rl::backend::ModuleState& s = rl::backend::state();
     std::lock_guard<std::mutex> lock(s.mutex);
@@ -247,8 +542,6 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID) {
         DisableThreadLibraryCalls(module);
         // Deliberately nothing else: loader lock. RenderLiftInstall does the work.
     } else if (reason == DLL_PROCESS_DETACH) {
-        // If the loader didn't uninstall (crash path), drop hooks so the
-        // process never calls into unloaded code.
         rl::backend::ModuleState& s = rl::backend::state();
         if (s.installed) (void)rl::backend::uninstallLocked(s);
     }

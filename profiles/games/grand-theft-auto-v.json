@@ -19,11 +19,15 @@
     "mode": "edge",
     "sharpening": 0.35
   },
+  "integration": {
+    "mode": "observe",
+    "observationFrames": 600
+  },
   "dynamicResolution": {
     "enabled": true,
     "targetFps": 30,
     "warmupFrames": 20,
     "cooldownFrames": 45
   },
-  "notes": "First RenderLift lab. Target hardware: Intel UHD 620 (8th-gen mobile). Start at 640x360 internal, extreme floor 426x240. We do NOT start at 320x180: the base pipeline (render-target steering + UI at native res) must be proven before pushing the floor. Single-player only — see SECURITY.md."
+  "notes": "First RenderLift lab. Target hardware: Intel UHD 620 (8th-gen mobile). Start at 640x360 internal, extreme floor 426x240. We do NOT start at 320x180: the base pipeline (render-target steering + UI at native res) must be proven before pushing the floor. integration.mode=observe: the Research Layer only watches/logs the frame until the resource map is confirmed (ADR 0003). Single-player only — see SECURITY.md."
 }
