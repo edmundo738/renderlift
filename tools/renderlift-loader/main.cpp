@@ -29,6 +29,14 @@
 
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
+// Mitigation-policy structs (SIGNATURE/IMAGE_LOAD/…) are NTDDI_WIN8+/WIN10
+// gated in the Windows SDK — target Windows 10 explicitly.
+#ifndef _WIN32_WINNT
+#define _WIN32_WINNT 0x0A00
+#endif
+#ifndef NTDDI_VERSION
+#define NTDDI_VERSION 0x0A000000
+#endif
 #include <windows.h>
 
 #include <psapi.h>
