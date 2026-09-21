@@ -1,0 +1,15 @@
+{
+  "schema": "renderlift/hardware-profile@1",
+  "id": "amd-vega-mobile",
+  "title": "AMD Radeon Vega (Ryzen mobile APU)",
+  "match": {
+    "vendorId": "0x1002",
+    "deviceIds": []
+  },
+  "class": "integrated",
+  "preferredApis": ["d3d11", "vulkan"],
+  "avoidApis": [],
+  "suggestedStartTier": "performance",
+  "reconstruction": { "mode": "edge", "sharpening": 0.4 },
+  "notes": "Placeholder family entry — device IDs to be filled from real DXGI probes once the detection module lands. Vega APUs generally tolerate Vulkan well, unlike UHD 6xx."
+}

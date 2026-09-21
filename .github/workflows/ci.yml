@@ -1,0 +1,49 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  profiles:
+    name: validate profiles
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - run: python tools/ci/validate_profiles.py
+
+  linux:
+    name: linux (core, tests, tools)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+      - name: build
+        run: cmake --build build -j
+      - name: test
+        run: ctest --test-dir build --output-on-failure
+      - name: cli smoke
+        run: |
+          ./build/bin/RenderLift.CLI ladder 1366x768
+          ./build/bin/RenderLift.CLI simulate profiles/games/grand-theft-auto-v.json --frames 240
+          ./build/bin/RenderLift.CLI backends
+
+  windows:
+    name: windows (msvc, all targets)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: configure
+        run: cmake -B build -G "Visual Studio 17 2022" -A x64
+      - name: build
+        run: cmake --build build --config Release -j
+      - name: test
+        run: ctest --test-dir build --output-on-failure -C Release
+      - name: cli smoke
+        run: |
+          ./build/bin/Release/RenderLift.CLI.exe simulate profiles/games/grand-theft-auto-v.json --frames 240

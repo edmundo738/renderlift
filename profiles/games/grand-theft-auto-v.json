@@ -1,0 +1,29 @@
+{
+  "schema": "renderlift/game-profile@1",
+  "id": "gta5",
+  "title": "Grand Theft Auto V",
+  "executable": "GTA5.exe",
+  "api": "d3d11",
+  "display": { "width": 1366, "height": 768 },
+  "internalLadder": [
+    { "width": 426, "height": 240 },
+    { "width": 480, "height": 270 },
+    { "width": 640, "height": 360 },
+    { "width": 854, "height": 480 },
+    { "width": 1024, "height": 576 },
+    { "width": 1366, "height": 768 }
+  ],
+  "defaultLevelIndex": 2,
+  "uiNative": true,
+  "reconstruction": {
+    "mode": "edge",
+    "sharpening": 0.35
+  },
+  "dynamicResolution": {
+    "enabled": true,
+    "targetFps": 30,
+    "warmupFrames": 20,
+    "cooldownFrames": 45
+  },
+  "notes": "First RenderLift lab. Target hardware: Intel UHD 620 (8th-gen mobile). Start at 640x360 internal, extreme floor 426x240. We do NOT start at 320x180: the base pipeline (render-target steering + UI at native res) must be proven before pushing the floor. Single-player only — see SECURITY.md."
+}

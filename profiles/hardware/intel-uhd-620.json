@@ -1,0 +1,15 @@
+{
+  "schema": "renderlift/hardware-profile@1",
+  "id": "intel-uhd-620",
+  "title": "Intel UHD Graphics 620 (Kaby Lake-R / 8th-gen mobile)",
+  "match": {
+    "vendorId": "0x8086",
+    "deviceIds": ["0x5917", "0x5916", "0x591C", "0x3EA0", "0x3EA5"]
+  },
+  "class": "integrated",
+  "preferredApis": ["d3d11"],
+  "avoidApis": ["vulkan", "d3d12"],
+  "suggestedStartTier": "extreme",
+  "reconstruction": { "mode": "edge", "sharpening": 0.35 },
+  "notes": "Reference GPU for the first lab. Memory-bandwidth bound; LPDDR3/DDR4 shared with the CPU. D3D11 is the sweet spot on this part; Vulkan driver support on 8th-gen mobile is inconsistent, and D3D12's explicit model rarely pays off on iGPUs this size."
+}
