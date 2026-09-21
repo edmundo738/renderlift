@@ -52,3 +52,12 @@ jobs:
           if (-not (Test-Path ./build/bin/Release/RenderLift.D3D11.dll)) { throw "RenderLift.D3D11.dll was not produced" }
           if (-not (Test-Path ./build/bin/Release/RenderLift.Loader.exe)) { throw "RenderLift.Loader.exe was not produced" }
           Write-Host "RenderLift.D3D11.dll + RenderLift.Loader.exe produced OK"
+      - name: upload windows artifacts (research-layer lab pack)
+        uses: actions/upload-artifact@v4
+        with:
+          name: renderlift-0.2-windows-x64
+          path: |
+            build/bin/Release/*.dll
+            build/bin/Release/*.exe
+          if-no-files-found: error
+          retention-days: 30
