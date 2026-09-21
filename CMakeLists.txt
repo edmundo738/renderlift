@@ -1,0 +1,22 @@
+cmake_minimum_required(VERSION 3.20)
+project(RenderLift VERSION 0.1.0 LANGUAGES CXX)
+
+option(RENDERLIFT_BUILD_TESTS "Build RenderLift tests" ON)
+option(RENDERLIFT_BUILD_TOOLS "Build RenderLift tools" ON)
+option(RENDERLIFT_BUILD_BACKENDS "Build backend scaffolds" ON)
+
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+add_subdirectory(src)
+if(RENDERLIFT_BUILD_BACKENDS)
+  add_subdirectory(backends)
+endif()
+if(RENDERLIFT_BUILD_TOOLS)
+  add_subdirectory(tools)
+endif()
+if(RENDERLIFT_BUILD_TESTS)
+  enable_testing()
+  add_subdirectory(tests)
+endif()
