@@ -424,6 +424,33 @@ struct FrameDrawCounters {
     std::uint32_t maxVertices = 0;
 };
 
+// Probe-vtable capture (slot function addresses + object identity). Defined
+// BEFORE ModuleState — v3.5 stores a snapshot member for the PROBE × REAL
+// address comparison (`s.probe`).
+struct Vtables {
+    void* present = nullptr;
+    void* resizeBuffers = nullptr;
+    void* createTexture2D = nullptr;
+    void* createRtv = nullptr;
+    void* createDsv = nullptr;
+    void* drawIndexed = nullptr;
+    void* draw = nullptr;
+    void* drawIndexedInstanced = nullptr;
+    void* drawInstanced = nullptr;
+    void* drawAuto = nullptr;
+    void* drawIndexedInstancedIndirect = nullptr;
+    void* drawInstancedIndirect = nullptr;
+    void* omSetRenderTargets = nullptr;
+    void* rsSetViewports = nullptr;
+    // v3.5: probe-object identity (addresses stay valid as log evidence even
+    // after the probe objects are released)
+    void* executeCommandList = nullptr;  // probe ctx slot 58 (diagnostic only)
+    void* probeDevice = nullptr;
+    void* probeDevVtable = nullptr;
+    void* probeCtx = nullptr;
+    void* probeCtxVtable = nullptr;
+};
+
 // v3.4: per-slot counters for the draw/dispatch surface. `frameSlots` is
 // reset on every Present (feeds the per-frame `RLCAP1 draws …` line);
 // `windowSlots` accumulates across the observation window (feeds the
@@ -523,30 +550,6 @@ std::uint32_t observationCapFromEnv() {
 }
 
 // ── Vtable bootstrap ────────────────────────────────────────────────────────
-
-struct Vtables {
-    void* present = nullptr;
-    void* resizeBuffers = nullptr;
-    void* createTexture2D = nullptr;
-    void* createRtv = nullptr;
-    void* createDsv = nullptr;
-    void* drawIndexed = nullptr;
-    void* draw = nullptr;
-    void* drawIndexedInstanced = nullptr;
-    void* drawInstanced = nullptr;
-    void* drawAuto = nullptr;
-    void* drawIndexedInstancedIndirect = nullptr;
-    void* drawInstancedIndirect = nullptr;
-    void* omSetRenderTargets = nullptr;
-    void* rsSetViewports = nullptr;
-    // v3.5: probe-object identity (for PROBE × REAL comparison; addresses
-    // stay valid as log evidence even after the probe objects are released)
-    void* executeCommandList = nullptr;  // probe ctx slot 58 (diagnostic only)
-    void* probeDevice = nullptr;
-    void* probeDevVtable = nullptr;
-    void* probeCtx = nullptr;
-    void* probeCtxVtable = nullptr;
-};
 
 bool tryCreateProbe(D3D_DRIVER_TYPE driverType, HWND hwnd, IDXGISwapChain** swapchainOut,
                     ID3D11Device** deviceOut, ID3D11DeviceContext** contextOut) {
