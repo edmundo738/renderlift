@@ -1,103 +1,71 @@
 ═══════════════════════════════════════════════════════════════════════════
- RenderLift 0.2 — PACOTE DE LABORATÓRIO v3.4 (Windows x64) · MODO OBSERVE
+ RenderLift 0.2 — PACOTE DE LABORATÓRIO v3.5 (Windows x64) · MODO OBSERVE
  Render less. Reconstruct more. · eduardo × Arena · 2026-09-23
- CHECKPOINT: PROVA EMPÍRICA DO DRAW PATH (GTA V, janela de 2000 frames)
- build: CI run 35847348315 · commit 9504b2f · MSVC 0 erros · 67/67 testes
+ CHECKPOINT H2: QUEM RENDERIZA DE VERDADE? (PROBE × REAL, por endereços)
+ build: CI run 35858985913 · commit f945299 · MSVC 0 erros · 67/67 testes
 ═══════════════════════════════════════════════════════════════════════════
 
-★ O QUE A v3.4 RESPONDE (e só isto — sem downscale, sem ALRR, sem redirect,
-  sem shaders, sem qualquer alteração visual ou steering)
-  "Por onde é que o GTA V está realmente a passar para produzir os frames?"
-  A v3.3 provou: DLL entra, vtables resolvem, 9 hooks armam, Present dispara
-  todos os frames. MAS  Install=0 + Present observado ≠ draw path provado.
-  A v3.4 alarga a superfície de 9 → 14 hooks e torna o caminho de draw
-  diretamente observável.
+★ O QUE A v3.4 PROVOU (o teu teste, pid 43820 — obrigado)
+  Present disparou 2000/2000 frames com gameplay ativo MAS:
+    RLCAP1 summary ... draws=0 ctxs=0 ctxovf=0 verdict=DRAWPATH_ZERO
+  Nenhum hook de contexto disparou, nenhum contexto apareceu. Ficou provado
+  que as funções que os nossos hooks vigiavam NÃO receberam essas chamadas.
+  Agora queremos saber PORQUÊ: serão as âncoras do probe sequer o código
+  que o GTA usa? (H2) — responde-se com ENDEREÇOS, não com suposições.
 
-★ O QUE É NOVO NA DLL (loader 100% CONGELADO — nem um byte de código mudou)
-  • +5 hooks de contexto: DrawIndexedInstanced(20) · DrawInstanced(21) ·
-    DrawAuto(38) · DrawIndexedInstancedIndirect(39) ·
-    DrawInstancedIndirect(40) — todos passthrough de contagem (observe-only)
-  • FIRST-FIRE por slot: "RLCAP1 first slot=<Nome> ctx=0x..." (uma linha por
-    slot por janela — qual método disparou primeiro, em que contexto)
-  • CONTEXTOS DISTINTOS: "RLCAP1 context first=0x..." / "context new=0x..."
-    (máx. 32 registrados; overflow só contado — hot path fica leve)
-  • POR FRAME: "RLCAP1 draws frame=N d= di= diinst= dinst= dauto= diind=
-    dinstind= om= vp=" (o drawstat antigo é preservado byte a byte)
-  • RESUMO DA JANELA no cap (antes do "cap frames=" antigo):
-    "RLCAP1 summary frames=N ... draws=T ctxs=C ctxovf=O
-     verdict=DRAWPATH_ACTIVE|DRAWPATH_ZERO"
-  • JANELA DE OBSERVAÇÃO: 2000 FRAMES POR OMISSÃO (era 600)
-  • RE-ARM: repetir o mesmo comando do Loader abre uma NOVA janela sem
-    recarregar a DLL nem reinjetar — hooks ficam instalados
-    (log: "RLCAP1 rearm cap=2000")
+★ O QUE A v3.5 FAZ (só diagnóstico — ZERO hooks novos, 14 → 14)
+  No PRIMEIRO Present (o swapchain real, já provado), uma vez só,
+  protegido por SEH próprio (os diagnósticos nunca podem derrubar o GTA):
+    swapchain real → GetDevice(IID_ID3D11Device) → GetImmediateContext()
+    → GetType()/feature level → vtables reais → endereços por slot
+  e imprime a comparação palavra-a-palavra PROBE × REAL:
+    RLCAP1 probe device=0x… devvt=0x… context=0x… ctxvt=0x…
+    RLCAP1 real swap=0x… device=0x… devvt=0x… context=0x… ctxvt=0x…
+              type=IMMEDIATE(0) fl=0xb000
+    RLCAP1 cmp name=Present slot=8 probe=0x… real=0x… SAME     ← controlo
+    … (15 linhas cmp: Present, ResizeBuffers, CreateTexture2D/RTV/DSV,
+         DrawIndexed, Draw, DrawIndexedInstanced, DrawInstanced, DrawAuto,
+         DrawIndexedInstancedIndirect, DrawInstancedIndirect,
+         OMSetRenderTargets, RSSetViewports, ExecuteCommandList)
+    RLCAP1 real verdict=PROBE_EQ_REAL | PROBE_NE_REAL diffs=N |
+                        NO_ID3D11DEVICE
+  + FOCO COMO VARIÁVEL MEDIDA (não como explicação):
+    RLCAP1 focus state=FOCUSED frame=1 · RLCAP1 focus transition=A->B frame=N
+  TUDO O RESTO continua igual (draws por frame, first slot=, context=,
+  summary, rearm cap=2000, drawstat legado byte a byte).
 
-═══════════════════════════ PASSO 0 — MARK OF THE WEB ─
-  Extrai o zip para C:\RenderLift-lab\. Apaga binários de packs antigos.
-  Propriedades → Desbloquear no zip, ou em PowerShell:
-    Get-ChildItem "C:\RenderLift-lab" -Recurse | Unblock-File
+═══════════════════ COMO LER O RESULTADO (árvore de decisão) ═══════════════
+  • verdict=PROBE_NE_REAL com diffs>0 nos slots de contexto
+      → H2 CONFIRMADA: o probe ancorava funções diferentes das do jogo.
+        (a linha cmp de Present DEVE dizer SAME — é o controlo positivo.)
+  • verdict=PROBE_EQ_REAL (tudo SAME) e draws continuam a zero
+      → H2 perde força; sobe H3: deferred contexts / command lists
+        (vigia a linha de ExecuteCommandList cmp + o que vier a seguir).
+  • verdict=NO_ID3D11DEVICE  → o swapchain do jogo NÃO tem device D3D11 —
+      modo DX10/DX10.1: resposta direta ao DRAWPATH_ZERO.
 
-═══════════════════ O TESTE PRINCIPAL — 2000 FRAMES FOCADO ═════════════════
-  O sucesso desta build NÃO é Install=0 nem Present observado — é provar o
-  caminho de draw DURANTE GAMEPLAY REAL. Segue o protocolo à risca:
-
+═══════════════════ O TESTE — mesmo protocolo da v3.4 ══════════════════════
+  0) Extrai o zip para C:\RenderLift-lab\ (substitui os binários antigos,
+     apaga o RenderLift.D3D11.log anterior) e:
+       Get-ChildItem "C:\RenderLift-lab" -Recurse | Unblock-File
   1) Inicia o GTA V (Modo História) e carrega o teu save.
-  2) Deixa o jogo EM PRIMEIRO PLANO, a correr (não pauses).
-  3) Em C:\RenderLift-lab\ corre (numa janela à parte, p.ex. com Alt+Tab —
-     o jogo continua a correr):
+  2) Em C:\RenderLift-lab\ corre:
        RenderLift.Loader.exe --pid <PID> --dll .\RenderLift.D3D11.dll
-     Esperado: "... real base is 0x00007FF..." → entry page EXECUTABLE →
-     install cp=1..85 → "RLCAP1 armed hooks=14 mode=observe".
-  4) IMEDIATAMENTE volta ao GTA e MANTÉM O JOGO FOCADO.
-  5) JOGA CONTINUAMENTE durante toda a janela (~33 s a 60 fps, ~66 s a 30):
-     anda/corre, vira a câmara, entra num veículo, conduz — varia as
-     situações de rendering.
-  6) Quando o jogo tiver apresentado 2000 frames desde o armed, o log fecha
-     a janela com "RLCAP1 summary ... verdict=..." + "RLCAP1 cap
-     frames=2000". A partir daí podes fazer o que quiseres (a DLL deixa de
-     contar; o overhead cai a ~zero sem afetar o jogo).
-
-  NOVA JANELA SEM REINJETAR (re-arm): repete o comando do Loader do passo 3
-  em qualquer altura (mesmo depois do cap). O log ganha "RLCAP1 rearm
-  cap=2000" e uma nova janela de 2000 frames começa. Útil se a primeira
-  janela apanhar menu/loading em vez de gameplay.
-
-  (Opcional, só para curiosidade: o probe continua disponível —
-     RenderLift.Loader.exe --pid <PID> --dll .\RenderLift.D3D11.dll ^
-       --call RenderLiftEntryProbe --param "C:\RenderLift-lab\RenderLift.probe"
-   mas já não é preciso: a fronteira está provada desde a v3.3.)
-
-  CAP PERSONALIZADO (não necessário para o teste oficial): a variável
-  RENDERLIFT_OBSERVE_FRAMES é lida do AMBIENTE DO PROCESSO DO JOGO —
-  define-a ANTES de lançar o GTA (p.ex. setx RENDERLIFT_OBSERVE_FRAMES
-  5000 + reiniciar, ou lança o GTA a partir de uma shell com ela definida).
-  Sem ela definem 2000. 0 = ilimitado (sem summary nem "cap" — não usar
-  no teste oficial).
-
-══════════════════════════════ COMO LER O RESULTADO ─
-  Abre C:\RenderLift-lab\RenderLift.D3D11.log (espelho em %TEMP%).
-
-  [A] Armed com 14 hooks:
-      "RLCAP1 armed hooks=14 mode=observe"    ← senão copia as linhas cp= e
-      qualquer "RLCAP1 fail ..." e manda.
-  [B] Primeiros disparos (procuram-se UMA vez por slot):
-      "RLCAP1 context first=0x..." / "context new=0x..."
-      "RLCAP1 first slot=DrawIndexedInstanced ctx=0x..."  ← o que aparecer
-  [C] A linha "RLCAP1 summary frames=2000 ...":
-      draws>0 e/ou diinst/dinst/om/vp>0  → Draw path = PROVEN + sabemos
-                                           EXATAMENTE por onde o jogo passa
-      tudo a 0, ctxs=0, com jogo FOCADO → o render NÃO usa estas funções
-      D3D11 (caminho contexto diferente / modo DX10) — abre-se a H2; manda
-      o log à mesma: o resultado negativo também é a resposta
-  [D] "Draw/DrawIndexed antigos" continuam a 0 enquanto diinst>0 →
-      confirma a hipótese H1 (cobertura) — era só coverage de slots.
-
-  Inspector offline (opcional):
-      RenderLift.CLI.exe inspect "C:\RenderLift-lab\RenderLift.D3D11.log"
+     Esperado: "... real base is 0x00007FF..." → EXECUTABLE →
+     "RLCAP1 armed hooks=14 mode=observe".
+  3) Volta IMEDIATAMENTE ao GTA, mantém foco e joga durante os 2000 frames
+     (a descoberta PROBE×REAL corre no frame 1 — as linhas importantes
+     estão no TOPO do log; gameplay contínuo continua necessário para os
+     contadores).
+  4) Fim da janela: "RLCAP1 summary ... verdict=..." + "cap frames=2000".
+     Nova janela: repete o comando (re-arm) — os dados PROBE×REAL são de
+     uma só vez por carga da DLL (não se repetem no rearm; ficam no log).
 
   MANDA-ME (tudo):
-    • a saída COMPLETA do Loader (passo 3 e, se usares, rearm)
-    • RenderLift.D3D11.log inteiro (da pasta-lab OU do %TEMP%)
-    • se algo falhar: RenderLift.entry + as linhas cp=/fail/seh
+    • a saída COMPLETA do Loader
+    • RenderLift.D3D11.log INTEIRO (as ~30 primeiras linhas têm o
+      probe/real/cmp/verdict + focus; as últimas têm o summary)
+    • qualquer "RLCAP1 discover seh …" se existir
 
 ⚠️ REGRAS DE SEGURANÇA (invioláveis)
   • APENAS Modo História. NUNCA GTA Online (anti-cheat).
@@ -105,15 +73,14 @@
   • VC++ Redist 2015-2022 x64: https://aka.ms/vs/17/release/vc_redist.x64.exe
 
 ────────────────────────────────────────────── O QUE ESTÁ DENTRO ─
-  Build: Windows CI (MSVC) run 35847348315 · commit 9504b2f · 0 erros ·
-  67/67 testes · RenderLift.Loader.exe código-fonte INALTERADO desde a v3.3
-  (congelado por decisão do projeto; binário republicado do mesmo source).
+  Build: Windows CI (MSVC) run 35858985913 · commit f945299 · 0 erros ·
+  67/67 testes · Loader com código-fonte INALTERADO (congelado).
   Export contract 4/4 (evidência anexa RenderLift.D3D11.exports.txt):
-    [1] RenderLiftEntryProbe   RVA=0x00007120
-    [2] RenderLiftFrameCount   RVA=0x000071b0
-    [3] RenderLiftInstall      RVA=0x000071d0
-    [4] RenderLiftUninstall    RVA=0x000073e0
+    [1] RenderLiftEntryProbe   RVA=0x00008500
+    [2] RenderLiftFrameCount   RVA=0x00008590
+    [3] RenderLiftInstall      RVA=0x000085b0
+    [4] RenderLiftUninstall    RVA=0x000087c0
   (RVAs mudam entre builds — normal; o Loader resolve por NOME.)
-  Narrativa: docs/research/d3d11-research-layer.md §5.1 (runs 1–6) e §5.2
-  (desenho deste checkpoint + árvore de decisão H1/H2/H3).
+  Narrativa: docs/research/d3d11-research-layer.md §5.2 (resultado v3.4)
+  e §5.3 (desenho deste checkpoint H2 + árvore de decisão).
 ═══════════════════════════════════════════════════════════════════════════
