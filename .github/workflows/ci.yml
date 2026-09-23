@@ -1,0 +1,110 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  profiles:
+    name: validate profiles
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - run: python tools/ci/validate_profiles.py
+
+  linux:
+    name: linux (core, tests, tools)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+      - name: build
+        run: cmake --build build -j
+      - name: test
+        run: ctest --test-dir build --output-on-failure
+      - name: cli smoke
+        run: |
+          ./build/bin/RenderLift.CLI ladder 1366x768
+          ./build/bin/RenderLift.CLI simulate profiles/games/grand-theft-auto-v.json --frames 240
+          ./build/bin/RenderLift.CLI backends
+
+  windows:
+    name: windows (msvc, all targets)
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: configure
+        shell: pwsh
+        run: |
+          # windows-latest may ship any recent VS (2026 now) — let CMake pick
+          # the newest installed generator instead of pinning a version.
+          cmd /c 'cmake -B build 2>&1' | Tee-Object -FilePath build-msvc-configure.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: build
+        shell: pwsh
+        run: |
+          cmd /c "cmake --build build --config Release -j 2>&1" | Tee-Object -FilePath build-msvc.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: test
+        run: ctest --test-dir build --output-on-failure -C Release
+      - name: cli smoke
+        run: |
+          ./build/bin/Release/RenderLift.CLI.exe simulate profiles/games/grand-theft-auto-v.json --frames 240
+      - name: verify RenderLift.D3D11 module + loader
+        run: |
+          if (-not (Test-Path ./build/bin/Release/RenderLift.D3D11.dll)) { throw "RenderLift.D3D11.dll was not produced" }
+          if (-not (Test-Path ./build/bin/Release/RenderLift.Loader.exe)) { throw "RenderLift.Loader.exe was not produced" }
+          Write-Host "RenderLift.D3D11.dll + RenderLift.Loader.exe produced OK"
+      - name: EXPORT CONTRACT verification (fails build if missing)
+        # The injection contract (RenderLiftInstall/Uninstall/FrameCount) plus
+        # the frontier-diagnostic probe (RenderLiftEntryProbe, v3.2 lab
+        # experiment) is part of the product. Parse the actual PE export
+        # table of the final DLL — never trust source alone. Evidence lands
+        # in the lab pack.
+        shell: pwsh
+        run: |
+          python tools/ci/pe_exports.py ./build/bin/Release/RenderLift.D3D11.dll | Tee-Object -FilePath RenderLift.D3D11.exports.txt
+          $log = Get-Content RenderLift.D3D11.exports.txt -Raw
+          if ($log -match 'WARNING: C\+\+ name mangling') { throw 'C++ name mangling in exports — extern broken' }
+          foreach ($name in @('RenderLiftInstall','RenderLiftUninstall','RenderLiftFrameCount','RenderLiftEntryProbe')) {
+              if (-not ($log -match [regex]::Escape($name))) { throw "REQUIRED EXPORT MISSING: $name" }
+          }
+          Write-Host "export contract verified (4/4 exports present, no mangling)"
+      - name: publish lab pack to dist-pack branch
+        # The sandbox cannot reach Azure Blob storage (artifact downloads);
+        # a plain git branch is the transport mechanism for binários + logs.
+        # ADDITIVE: keep manually published files (lab zips, LEIA-ME, notes)
+        # — clone the existing branch and only refresh the build outputs.
+        if: always()
+        shell: pwsh
+        run: |
+          $repo = "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
+          if (Test-Path dist-pack) { Remove-Item -Recurse -Force dist-pack }
+          git clone -q --depth 1 --branch dist-pack $repo dist-pack 2>$null
+          if (-not (Test-Path dist-pack/.git)) {
+            New-Item -ItemType Directory -Force dist-pack | Out-Null
+            Push-Location dist-pack
+            git init -q
+            git checkout -q -b dist-pack
+            git remote add origin $repo
+            Pop-Location
+          }
+          if (Test-Path build/bin/Release) { Copy-Item build/bin/Release/*.dll, build/bin/Release/*.exe dist-pack/ -ErrorAction SilentlyContinue }
+          if (Test-Path build-msvc.log) { Copy-Item build-msvc.log dist-pack/ }
+          if (Test-Path build-msvc-configure.log) { Copy-Item build-msvc-configure.log dist-pack/ }
+          if (Test-Path RenderLift.D3D11.exports.txt) { Copy-Item RenderLift.D3D11.exports.txt dist-pack/ }
+          "sha: $($env:GITHUB_SHA)`nrun: $($env:GITHUB_RUN_ID)" | Set-Content dist-pack/BUILD.txt
+          Push-Location dist-pack
+          git config user.email "renderlift-ci@users.noreply.github.com"
+          git config user.name "RenderLift CI"
+          git add -A
+          git commit -q -m "CI lab pack (run $($env:GITHUB_RUN_ID))" --allow-empty
+          git push -q origin dist-pack
+          Pop-Location

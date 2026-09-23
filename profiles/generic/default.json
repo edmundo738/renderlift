@@ -1,0 +1,23 @@
+{
+  "schema": "renderlift/game-profile@1",
+  "id": "generic.default",
+  "title": "Generic fallback (no game profile matched)",
+  "api": "auto",
+  "display": { "width": 1366, "height": 768 },
+  "defaultLevelIndex": 3,
+  "uiNative": true,
+  "reconstruction": {
+    "mode": "edge",
+    "sharpening": 0.35
+  },
+  "integration": {
+    "mode": "observe",
+    "observationFrames": 600
+  },
+  "dynamicResolution": {
+    "enabled": true,
+    "targetFps": 30,
+    "warmupFrames": 20,
+    "cooldownFrames": 45
+  }
+}

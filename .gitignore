@@ -1,0 +1,66 @@
+# ── Build output ────────────────────────────────────────────────
+build/
+out/
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+CTestTestfile.cmake
+Testing/
+*.ninja_deps
+*.ninja_log
+
+# ── Compiled artifacts ─────────────────────────────────────────
+*.o
+*.obj
+*.lib
+*.a
+*.so
+*.dylib
+*.dll
+*.exe
+*.pdb
+*.ilk
+*.exp
+
+# Compiled shaders
+*.cso
+*.spv
+*.dxil
+
+# ── IDE / editors ──────────────────────────────────────────────
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+*.vcxproj.user
+.fleet/
+
+# ── OS ─────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── Runtime artifacts ──────────────────────────────────────────
+logs/
+*.log
+*.dmp
+screenshots/
+captures/
+
+# ── Tooling caches ─────────────────────────────────────────────
+__pycache__/
+*.pyc
+.cache/
+
+# ── Third-party (vendored archives stay out; sources are vendored
+#    explicitly under third_party/<name>/ with their licenses) ──
+third_party/*.zip
+third_party/*.tar.gz
+
+# ── Local lab-pack workshop (assembled here, shipped via dist-pack branch) ──
+.arena-pack/
+.arena-inspect/
+.arena-labme.txt
+renderlift-*-lab-pack-win64*.zip
