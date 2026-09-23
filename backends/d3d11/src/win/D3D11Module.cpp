@@ -6,12 +6,23 @@
 // it records what the game does into an RLCAP1 capture log and returns
 // control to the original function untouched.
 //
-// Observed surface:
+// Observed surface (v3.4 — 14 hooks, still measured passthrough only):
 //   ID3D11Device:        CreateTexture2D(5) · CreateRenderTargetView(9)
 //                        CreateDepthStencilView(10)
-//   ID3D11DeviceContext: DrawIndexed(12) · Draw(13) · OMSetRenderTargets(33)
-//                        RSSetViewports(44)        (aggregated per frame)
+//   ID3D11DeviceContext: DrawIndexed(12) · Draw(13) · DrawIndexedInstanced(20)
+//                        DrawInstanced(21) · OMSetRenderTargets(33)
+//                        DrawAuto(38) · DrawIndexedInstancedIndirect(39)
+//                        DrawInstancedIndirect(40) · RSSetViewports(44)
 //   IDXGISwapChain:      Present(8) · ResizeBuffers(13)
+//
+// v3.4 draw-path evidence (OBSERVE-only — zero visual/rendering change):
+//   per-frame `RLCAP1 draws …` per-slot counters, first-fire lines
+//   (`RLCAP1 first slot=<name> ctx=…`), distinct-context tracking
+//   (`RLCAP1 context first=/new=…`), a window summary at the cap
+//   (`RLCAP1 summary … verdict=…`), and a re-arm path: calling Install
+//   again while installed reopens a fresh observation window.
+// The legacy `drawstat frame=N calls= maxidx= maxvtx=` and `cap frames=`
+// lines are untouched (wire format and consumers preserved).
 //
 // Output: "RenderLift.D3D11.log" (RLCAP1 lines, next to this DLL by default)
 //   — inspect offline with:
@@ -20,7 +31,9 @@
 //   the top of RenderLiftInstall, kernel32-only — see the v3.1 evidence
 //   transport block below).
 //
-// Env overrides: RENDERLIFT_LOG (path) · RENDERLIFT_OBSERVE_FRAMES (cap).
+// Env overrides: RENDERLIFT_LOG (path) · RENDERLIFT_OBSERVE_FRAMES (cap,
+// default 2000; read from the TARGET process environment — set it before
+// the game launches, or leave the default for the official lab window).
 // Injection contract: loader LoadLibrary()s the DLL, calls RenderLiftInstall
 // once the game is up — never hook from DllMain (loader lock).
 // ─────────────────────────────────────────────────────────────────────────────
@@ -77,7 +90,12 @@ constexpr std::size_t CreateDepthStencilView = 10;
 // ID3D11DeviceContext (IUnknown 0-2 · ID3D11DeviceChild 3-6 · VSSetConstantBuffers 7)
 constexpr std::size_t DrawIndexed = 12;
 constexpr std::size_t Draw = 13;
+constexpr std::size_t DrawIndexedInstanced = 20;
+constexpr std::size_t DrawInstanced = 21;
 constexpr std::size_t OMSetRenderTargets = 33;
+constexpr std::size_t DrawAuto = 38;
+constexpr std::size_t DrawIndexedInstancedIndirect = 39;
+constexpr std::size_t DrawInstancedIndirect = 40;
 constexpr std::size_t RSSetViewports = 44;
 }  // namespace slot
 
@@ -96,6 +114,15 @@ using CreateDsvFn = HRESULT(STDMETHODCALLTYPE*)(ID3D11Device*, ID3D11Resource*,
                                                 ID3D11DepthStencilView**);
 using DrawIndexedFn = void(STDMETHODCALLTYPE*)(ID3D11DeviceContext*, UINT, UINT, INT);
 using DrawFn = void(STDMETHODCALLTYPE*)(ID3D11DeviceContext*, UINT, UINT);
+using DrawIndexedInstancedFn = void(STDMETHODCALLTYPE*)(ID3D11DeviceContext*, UINT, UINT,
+                                                        UINT, INT, UINT);
+using DrawInstancedFn = void(STDMETHODCALLTYPE*)(ID3D11DeviceContext*, UINT, UINT, UINT,
+                                                 UINT);
+using DrawAutoFn = void(STDMETHODCALLTYPE*)(ID3D11DeviceContext*);
+using DrawIndexedInstancedIndirectFn = void(STDMETHODCALLTYPE*)(ID3D11DeviceContext*,
+                                                                ID3D11Buffer*, UINT);
+using DrawInstancedIndirectFn = void(STDMETHODCALLTYPE*)(ID3D11DeviceContext*,
+                                                         ID3D11Buffer*, UINT);
 using OMSetRenderTargetsFn = void(STDMETHODCALLTYPE*)(ID3D11DeviceContext*, UINT,
                                                       ID3D11RenderTargetView* const*,
                                                       ID3D11DepthStencilView*);
@@ -386,6 +413,42 @@ struct FrameDrawCounters {
     std::uint32_t maxVertices = 0;
 };
 
+// v3.4: per-slot counters for the draw/dispatch surface. `frameSlots` is
+// reset on every Present (feeds the per-frame `RLCAP1 draws …` line);
+// `windowSlots` accumulates across the observation window (feeds the
+// `RLCAP1 summary …` line written when the frame cap is reached).
+struct SlotCounters {
+    std::uint64_t draw = 0;                       // Draw(13)
+    std::uint64_t drawIndexed = 0;                // DrawIndexed(12)
+    std::uint64_t drawIndexedInstanced = 0;       // DrawIndexedInstanced(20)
+    std::uint64_t drawInstanced = 0;              // DrawInstanced(21)
+    std::uint64_t drawAuto = 0;                   // DrawAuto(38)
+    std::uint64_t drawIndexedInstancedIndirect = 0;  // …InstancedIndirect(39)
+    std::uint64_t drawInstancedIndirect = 0;      // DrawInstancedIndirect(40)
+    std::uint64_t omSetRenderTargets = 0;         // OMSetRenderTargets(33)
+    std::uint64_t rsSetViewports = 0;             // RSSetViewports(44)
+
+    void add(const SlotCounters& o) {
+        draw += o.draw;
+        drawIndexed += o.drawIndexed;
+        drawIndexedInstanced += o.drawIndexedInstanced;
+        drawInstanced += o.drawInstanced;
+        drawAuto += o.drawAuto;
+        drawIndexedInstancedIndirect += o.drawIndexedInstancedIndirect;
+        drawInstancedIndirect += o.drawInstancedIndirect;
+        omSetRenderTargets += o.omSetRenderTargets;
+        rsSetViewports += o.rsSetViewports;
+    }
+
+    std::uint64_t drawsTotal() const {
+        return draw + drawIndexed + drawIndexedInstanced + drawInstanced + drawAuto +
+               drawIndexedInstancedIndirect + drawInstancedIndirect;
+    }
+};
+
+// Distinct contexts tracked per window (enough for immediate + deferred sets).
+constexpr std::uint32_t kMaxTrackedContexts = 32;
+
 struct ModuleState {
     std::mutex mutex;    // guards the non-atomic members below
     std::unique_ptr<IHookEngine> hooks;
@@ -398,15 +461,28 @@ struct ModuleState {
     CreateDsvFn originalCreateDsv = nullptr;
     DrawIndexedFn originalDrawIndexed = nullptr;
     DrawFn originalDraw = nullptr;
+    DrawIndexedInstancedFn originalDrawIndexedInstanced = nullptr;
+    DrawInstancedFn originalDrawInstanced = nullptr;
+    DrawAutoFn originalDrawAuto = nullptr;
+    DrawIndexedInstancedIndirectFn originalDrawIndexedInstancedIndirect = nullptr;
+    DrawInstancedIndirectFn originalDrawInstancedIndirect = nullptr;
     OMSetRenderTargetsFn originalOMSetRenderTargets = nullptr;
     RSSetViewportsFn originalRSSetViewports = nullptr;
 
     bool installed = false;
     std::atomic<bool> observing{false};  // read on the hot path without the mutex
     std::uint64_t frame = 0;
-    std::uint32_t observationCap = 600;  // frames; 0 = unlimited
+    std::uint32_t observationCap = 2000;  // frames; 0 = unlimited
     std::uint64_t presentCount = 0;
     FrameDrawCounters draw;
+
+    // v3.4 window diagnostics (reset on re-arm, all under mutex):
+    SlotCounters frameSlots;
+    SlotCounters windowSlots;
+    std::uint32_t firstLoggedMask = 0;  // one "first slot=" line per bit
+    std::uint64_t seenCtxs[kMaxTrackedContexts]{};
+    std::uint32_t seenCtxCount = 0;     // distinct contexts observed this window
+    std::uint32_t seenCtxOverflow = 0;  // distinct contexts beyond tracking capacity
 };
 
 // The state block is constructed EXPLICITLY during install (checkpoint 2),
@@ -425,7 +501,7 @@ std::uint32_t observationCapFromEnv() {
         const unsigned long v = std::strtoul(env, nullptr, 10);
         return static_cast<std::uint32_t>(v);
     }
-    return 600;
+    return 2000;  // v3.4 main lab window (6 s → 33+ s of gameplay, fps-dependent)
 }
 
 // ── Vtable bootstrap ────────────────────────────────────────────────────────
@@ -438,6 +514,11 @@ struct Vtables {
     void* createDsv = nullptr;
     void* drawIndexed = nullptr;
     void* draw = nullptr;
+    void* drawIndexedInstanced = nullptr;
+    void* drawInstanced = nullptr;
+    void* drawAuto = nullptr;
+    void* drawIndexedInstancedIndirect = nullptr;
+    void* drawInstancedIndirect = nullptr;
     void* omSetRenderTargets = nullptr;
     void* rsSetViewports = nullptr;
 };
@@ -503,11 +584,17 @@ bool resolveVtables(Vtables& out) {
         out.createDsv = dev.functionAt(slot::CreateDepthStencilView);
         out.drawIndexed = ctx.functionAt(slot::DrawIndexed);
         out.draw = ctx.functionAt(slot::Draw);
+        out.drawIndexedInstanced = ctx.functionAt(slot::DrawIndexedInstanced);
+        out.drawInstanced = ctx.functionAt(slot::DrawInstanced);
+        out.drawAuto = ctx.functionAt(slot::DrawAuto);
+        out.drawIndexedInstancedIndirect = ctx.functionAt(slot::DrawIndexedInstancedIndirect);
+        out.drawInstancedIndirect = ctx.functionAt(slot::DrawInstancedIndirect);
         out.omSetRenderTargets = ctx.functionAt(slot::OMSetRenderTargets);
         out.rsSetViewports = ctx.functionAt(slot::RSSetViewports);
         ok = out.present && out.resizeBuffers && out.createTexture2D && out.createRtv &&
              out.omSetRenderTargets && out.rsSetViewports;
-        earlyLogf("RLCAP1 vtables present=%p draw=%p om=%p ok=%d", out.present, out.draw,
+        earlyLogf("RLCAP1 vtables present=%p draw=%p diinst=%p dauto=%p om=%p ok=%d",
+                  out.present, out.draw, out.drawIndexedInstanced, out.drawAuto,
                   out.omSetRenderTargets, ok ? 1 : 0);
     }
 
@@ -524,6 +611,56 @@ bool resolveVtables(Vtables& out) {
 
 bool observing() { return state().observing.load(std::memory_order_relaxed); }
 
+// ── v3.4 first-fire / distinct-context evidence (call sites hold s.mutex) ───
+
+enum FirstSlotBit : std::uint32_t {
+    kFirstBit_DrawIndexed = 1u << 0,
+    kFirstBit_Draw = 1u << 1,
+    kFirstBit_DrawIndexedInstanced = 1u << 2,
+    kFirstBit_DrawInstanced = 1u << 3,
+    kFirstBit_DrawAuto = 1u << 4,
+    kFirstBit_DrawIndexedInstancedIndirect = 1u << 5,
+    kFirstBit_DrawInstancedIndirect = 1u << 6,
+    kFirstBit_OMSetRenderTargets = 1u << 7,
+    kFirstBit_RSSetViewports = 1u << 8,
+};
+
+void noteFirstSlot(ModuleState& s, std::uint32_t bit, const char* name, const void* ctx) {
+    if ((s.firstLoggedMask & bit) != 0) return;
+    s.firstLoggedMask |= bit;
+    char line[128];
+    std::snprintf(line, sizeof line, "RLCAP1 first slot=%s ctx=0x%llx", name,
+                  static_cast<unsigned long long>(
+                      reinterpret_cast<std::uintptr_t>(ctx)));
+    s.log.writeRaw(line);
+}
+
+// Bounded (32-slot) distinct-context set. The first context ever seen gets a
+// `context first=` line; every later distinct one gets `context new=`. Beyond
+// the capacity we keep counting (seenCtxOverflow) without logging per call —
+// the window summary carries the totals.
+void noteContext(ModuleState& s, const void* ctx) {
+    const unsigned long long key =
+        static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(ctx));
+    const std::uint32_t stored =
+        (s.seenCtxCount < kMaxTrackedContexts) ? s.seenCtxCount : kMaxTrackedContexts;
+    for (std::uint32_t i = 0; i < stored; ++i) {
+        if (s.seenCtxs[i] == key) return;  // already known
+    }
+    if (s.seenCtxCount < kMaxTrackedContexts) {
+        char line[96];
+        std::snprintf(line, sizeof line,
+                      s.seenCtxCount == 0 ? "RLCAP1 context first=0x%llx"
+                                          : "RLCAP1 context new=0x%llx",
+                      key);
+        s.log.writeRaw(line);
+        s.seenCtxs[s.seenCtxCount] = key;
+    } else {
+        ++s.seenCtxOverflow;
+    }
+    ++s.seenCtxCount;
+}
+
 // Draw* are the hottest hooks in the game — counting is all they may do.
 void STDMETHODCALLTYPE DrawIndexed_Hook(ID3D11DeviceContext* ctx, UINT indexCount,
                                         UINT startIndexLocation, INT baseVertexLocation) {
@@ -532,6 +669,9 @@ void STDMETHODCALLTYPE DrawIndexed_Hook(ID3D11DeviceContext* ctx, UINT indexCoun
         std::lock_guard<std::mutex> lock(s.mutex);
         ++s.draw.calls;
         if (indexCount > s.draw.maxIndices) s.draw.maxIndices = indexCount;
+        ++s.frameSlots.drawIndexed;
+        noteContext(s, ctx);
+        noteFirstSlot(s, kFirstBit_DrawIndexed, "DrawIndexed", ctx);
     }
     s.originalDrawIndexed(ctx, indexCount, startIndexLocation, baseVertexLocation);
 }
@@ -543,8 +683,81 @@ void STDMETHODCALLTYPE Draw_Hook(ID3D11DeviceContext* ctx, UINT vertexCount,
         std::lock_guard<std::mutex> lock(s.mutex);
         ++s.draw.calls;
         if (vertexCount > s.draw.maxVertices) s.draw.maxVertices = vertexCount;
+        ++s.frameSlots.draw;
+        noteContext(s, ctx);
+        noteFirstSlot(s, kFirstBit_Draw, "Draw", ctx);
     }
     s.originalDraw(ctx, vertexCount, startVertexLocation);
+}
+
+void STDMETHODCALLTYPE DrawIndexedInstanced_Hook(ID3D11DeviceContext* ctx,
+                                                 UINT indexCountPerInstance,
+                                                 UINT instanceCount,
+                                                 UINT startIndexLocation,
+                                                 INT baseVertexLocation,
+                                                 UINT startInstanceLocation) {
+    ModuleState& s = state();
+    if (observing()) {
+        std::lock_guard<std::mutex> lock(s.mutex);
+        ++s.frameSlots.drawIndexedInstanced;
+        noteContext(s, ctx);
+        noteFirstSlot(s, kFirstBit_DrawIndexedInstanced, "DrawIndexedInstanced", ctx);
+    }
+    s.originalDrawIndexedInstanced(ctx, indexCountPerInstance, instanceCount,
+                                   startIndexLocation, baseVertexLocation,
+                                   startInstanceLocation);
+}
+
+void STDMETHODCALLTYPE DrawInstanced_Hook(ID3D11DeviceContext* ctx,
+                                          UINT vertexCountPerInstance, UINT instanceCount,
+                                          UINT startVertexLocation,
+                                          UINT startInstanceLocation) {
+    ModuleState& s = state();
+    if (observing()) {
+        std::lock_guard<std::mutex> lock(s.mutex);
+        ++s.frameSlots.drawInstanced;
+        noteContext(s, ctx);
+        noteFirstSlot(s, kFirstBit_DrawInstanced, "DrawInstanced", ctx);
+    }
+    s.originalDrawInstanced(ctx, vertexCountPerInstance, instanceCount,
+                            startVertexLocation, startInstanceLocation);
+}
+
+void STDMETHODCALLTYPE DrawAuto_Hook(ID3D11DeviceContext* ctx) {
+    ModuleState& s = state();
+    if (observing()) {
+        std::lock_guard<std::mutex> lock(s.mutex);
+        ++s.frameSlots.drawAuto;
+        noteContext(s, ctx);
+        noteFirstSlot(s, kFirstBit_DrawAuto, "DrawAuto", ctx);
+    }
+    s.originalDrawAuto(ctx);
+}
+
+void STDMETHODCALLTYPE DrawIndexedInstancedIndirect_Hook(
+    ID3D11DeviceContext* ctx, ID3D11Buffer* pBufferForArgs, UINT alignedByteOffsetForArgs) {
+    ModuleState& s = state();
+    if (observing()) {
+        std::lock_guard<std::mutex> lock(s.mutex);
+        ++s.frameSlots.drawIndexedInstancedIndirect;
+        noteContext(s, ctx);
+        noteFirstSlot(s, kFirstBit_DrawIndexedInstancedIndirect,
+                      "DrawIndexedInstancedIndirect", ctx);
+    }
+    s.originalDrawIndexedInstancedIndirect(ctx, pBufferForArgs, alignedByteOffsetForArgs);
+}
+
+void STDMETHODCALLTYPE DrawInstancedIndirect_Hook(ID3D11DeviceContext* ctx,
+                                                  ID3D11Buffer* pBufferForArgs,
+                                                  UINT alignedByteOffsetForArgs) {
+    ModuleState& s = state();
+    if (observing()) {
+        std::lock_guard<std::mutex> lock(s.mutex);
+        ++s.frameSlots.drawInstancedIndirect;
+        noteContext(s, ctx);
+        noteFirstSlot(s, kFirstBit_DrawInstancedIndirect, "DrawInstancedIndirect", ctx);
+    }
+    s.originalDrawInstancedIndirect(ctx, pBufferForArgs, alignedByteOffsetForArgs);
 }
 
 void STDMETHODCALLTYPE OMSetRenderTargets_Hook(ID3D11DeviceContext* ctx, UINT numViews,
@@ -552,6 +765,10 @@ void STDMETHODCALLTYPE OMSetRenderTargets_Hook(ID3D11DeviceContext* ctx, UINT nu
                                                ID3D11DepthStencilView* pDsv) {
     ModuleState& s = state();
     if (observing()) {
+        std::lock_guard<std::mutex> lock(s.mutex);
+        ++s.frameSlots.omSetRenderTargets;
+        noteContext(s, ctx);
+        noteFirstSlot(s, kFirstBit_OMSetRenderTargets, "OMSetRenderTargets", ctx);
         obs::RenderTargetsEvent e{};
         e.context = reinterpret_cast<std::uint64_t>(ctx);
         e.count = (numViews > obs::kMaxRtvs) ? obs::kMaxRtvs : numViews;
@@ -567,15 +784,21 @@ void STDMETHODCALLTYPE OMSetRenderTargets_Hook(ID3D11DeviceContext* ctx, UINT nu
 void STDMETHODCALLTYPE RSSetViewports_Hook(ID3D11DeviceContext* ctx, UINT numViewports,
                                            const D3D11_VIEWPORT* pViewports) {
     ModuleState& s = state();
-    if (observing() && pViewports != nullptr && numViewports > 0) {
-        obs::ViewportEvent e{};
-        e.context = reinterpret_cast<std::uint64_t>(ctx);
-        e.count = numViewports;
-        e.x = pViewports[0].TopLeftX;
-        e.y = pViewports[0].TopLeftY;
-        e.w = pViewports[0].Width;
-        e.h = pViewports[0].Height;
-        s.log.write(e);
+    if (observing()) {
+        std::lock_guard<std::mutex> lock(s.mutex);
+        ++s.frameSlots.rsSetViewports;
+        noteContext(s, ctx);
+        noteFirstSlot(s, kFirstBit_RSSetViewports, "RSSetViewports", ctx);
+        if (pViewports != nullptr && numViewports > 0) {
+            obs::ViewportEvent e{};
+            e.context = reinterpret_cast<std::uint64_t>(ctx);
+            e.count = numViewports;
+            e.x = pViewports[0].TopLeftX;
+            e.y = pViewports[0].TopLeftY;
+            e.w = pViewports[0].Width;
+            e.h = pViewports[0].Height;
+            s.log.write(e);
+        }
     }
     s.originalRSSetViewports(ctx, numViewports, pViewports);
 }
@@ -643,13 +866,33 @@ HRESULT STDMETHODCALLTYPE Present_Hook(IDXGISwapChain* swapchain, UINT syncInter
         ++s.presentCount;
 
         if (s.observing) {
-            // Per-frame aggregate first, then the frame marker.
+            // Per-frame aggregate first, then the frame marker — legacy
+            // `drawstat` wire line preserved verbatim (v3.4: MUST NOT change).
             obs::DrawStatEvent stat{};
             stat.frame = s.frame;
             stat.calls = s.draw.calls;
             stat.maxIndices = s.draw.maxIndices;
             stat.maxVertices = s.draw.maxVertices;
             s.log.write(stat);
+
+            // v3.4: per-slot coverage diagnostic (raw line; the RLCAP1 parser
+            // tolerates unknown tags, offline inspector just skips it).
+            char line[384];
+            std::snprintf(line, sizeof line,
+                          "RLCAP1 draws frame=%llu d=%llu di=%llu diinst=%llu dinst=%llu"
+                          " dauto=%llu diind=%llu dinstind=%llu om=%llu vp=%llu",
+                          static_cast<unsigned long long>(s.frame),
+                          static_cast<unsigned long long>(s.frameSlots.draw),
+                          static_cast<unsigned long long>(s.frameSlots.drawIndexed),
+                          static_cast<unsigned long long>(s.frameSlots.drawIndexedInstanced),
+                          static_cast<unsigned long long>(s.frameSlots.drawInstanced),
+                          static_cast<unsigned long long>(s.frameSlots.drawAuto),
+                          static_cast<unsigned long long>(s.frameSlots.drawIndexedInstancedIndirect),
+                          static_cast<unsigned long long>(s.frameSlots.drawInstancedIndirect),
+                          static_cast<unsigned long long>(s.frameSlots.omSetRenderTargets),
+                          static_cast<unsigned long long>(s.frameSlots.rsSetViewports));
+            s.log.writeRaw(line);
+            s.windowSlots.add(s.frameSlots);
 
             obs::PresentEvent e{};
             e.swapchain = reinterpret_cast<std::uint64_t>(swapchain);
@@ -659,12 +902,35 @@ HRESULT STDMETHODCALLTYPE Present_Hook(IDXGISwapChain* swapchain, UINT syncInter
             if (s.frame % 30 == 0) s.log.flush();
 
             if (s.observationCap > 0 && s.frame >= s.observationCap) {
+                // Window summary BEFORE the legacy terminator — answers "por
+                // onde o jogo passou" without reading 2000 per-frame lines.
+                char sum[512];
+                std::snprintf(sum, sizeof sum,
+                              "RLCAP1 summary frames=%llu d=%llu di=%llu diinst=%llu"
+                              " dinst=%llu dauto=%llu diind=%llu dinstind=%llu om=%llu"
+                              " vp=%llu draws=%llu ctxs=%u ctxovf=%u verdict=%s",
+                              static_cast<unsigned long long>(s.frame),
+                              static_cast<unsigned long long>(s.windowSlots.draw),
+                              static_cast<unsigned long long>(s.windowSlots.drawIndexed),
+                              static_cast<unsigned long long>(s.windowSlots.drawIndexedInstanced),
+                              static_cast<unsigned long long>(s.windowSlots.drawInstanced),
+                              static_cast<unsigned long long>(s.windowSlots.drawAuto),
+                              static_cast<unsigned long long>(s.windowSlots.drawIndexedInstancedIndirect),
+                              static_cast<unsigned long long>(s.windowSlots.drawInstancedIndirect),
+                              static_cast<unsigned long long>(s.windowSlots.omSetRenderTargets),
+                              static_cast<unsigned long long>(s.windowSlots.rsSetViewports),
+                              static_cast<unsigned long long>(s.windowSlots.drawsTotal()),
+                              s.seenCtxCount, s.seenCtxOverflow,
+                              s.windowSlots.drawsTotal() > 0 ? "DRAWPATH_ACTIVE"
+                                                             : "DRAWPATH_ZERO");
+                s.log.writeRaw(sum);
                 s.log.writeRaw("RLCAP1 cap frames=" + std::to_string(s.frame));
                 s.log.flush();
                 s.observing = false;  // passthrough overhead drops to ~nothing
             }
         }
         s.draw = FrameDrawCounters{};
+        s.frameSlots = SlotCounters{};
     }
     return s.originalPresent(swapchain, syncInterval, flags);
 }
@@ -698,8 +964,8 @@ HRESULT STDMETHODCALLTYPE ResizeBuffers_Hook(IDXGISwapChain* swapchain, UINT buf
 // Checkpoint ids (gInstallPhase / "RLCAP1 install cp=N"):
 //   mark binary entry witness (RenderLift.entry) → "RLCAP1 entered" →
 //   1 entered  · 2 state block · 3 log open · 4 hook engine
-//   5 vtables  · 50..56 probe sub-steps · 60+i per-hook · 70 enableAll
-//   80 armed
+//   5 vtables  · 50..56 probe sub-steps · 60+i per-hook (14 → 60..73)
+//   75 enableAll · 85 armed
 // All of them — including the mark and cp=1 — run INSIDE the entry __try,
 // on the CRT-free kernel32 transport (v3.1 protocol).
 
@@ -727,6 +993,11 @@ HRESULT uninstallLocked(ModuleState& s) {
     s.originalCreateDsv = nullptr;
     s.originalDrawIndexed = nullptr;
     s.originalDraw = nullptr;
+    s.originalDrawIndexedInstanced = nullptr;
+    s.originalDrawInstanced = nullptr;
+    s.originalDrawAuto = nullptr;
+    s.originalDrawIndexedInstancedIndirect = nullptr;
+    s.originalDrawInstancedIndirect = nullptr;
     s.originalOMSetRenderTargets = nullptr;
     s.originalRSSetViewports = nullptr;
     s.log.flush();
@@ -743,7 +1014,29 @@ HRESULT installSteps() {
         if (gState == nullptr) return RL_E_STATE_ALLOC;
     }
     ModuleState& s = *gState;
-    if (s.installed) return S_OK;
+    if (s.installed) {
+        // ── v3.4 re-arm: hooks stay installed; open a fresh window ─────────
+        // A second CreateRemoteThread(RenderLiftInstall) call is now the
+        // supported way to start a NEW observation window without unloading
+        // or reinjecting the DLL (loader unchanged; GTA stays running).
+        std::lock_guard<std::mutex> lock(s.mutex);
+        s.frame = 0;
+        s.observationCap = observationCapFromEnv();
+        s.draw = FrameDrawCounters{};
+        s.frameSlots = SlotCounters{};
+        s.windowSlots = SlotCounters{};
+        s.firstLoggedMask = 0;
+        s.seenCtxCount = 0;
+        s.seenCtxOverflow = 0;
+        for (std::uint32_t i = 0; i < kMaxTrackedContexts; ++i) s.seenCtxs[i] = 0;
+        s.observing = true;
+        char line[96];
+        std::snprintf(line, sizeof line, "RLCAP1 rearm cap=%lu",
+                      static_cast<unsigned long>(s.observationCap));
+        s.log.writeRaw(line);
+        s.log.flush();
+        return S_OK;
+    }
     std::lock_guard<std::mutex> lock(s.mutex);
 
     setPhase(3);
@@ -787,11 +1080,23 @@ HRESULT installSteps() {
          reinterpret_cast<void**>(&s.originalDrawIndexed)},
         {vt.draw, reinterpret_cast<void*>(&Draw_Hook),
          reinterpret_cast<void**>(&s.originalDraw)},
+        {vt.drawIndexedInstanced, reinterpret_cast<void*>(&DrawIndexedInstanced_Hook),
+         reinterpret_cast<void**>(&s.originalDrawIndexedInstanced)},
+        {vt.drawInstanced, reinterpret_cast<void*>(&DrawInstanced_Hook),
+         reinterpret_cast<void**>(&s.originalDrawInstanced)},
+        {vt.drawAuto, reinterpret_cast<void*>(&DrawAuto_Hook),
+         reinterpret_cast<void**>(&s.originalDrawAuto)},
+        {vt.drawIndexedInstancedIndirect,
+         reinterpret_cast<void*>(&DrawIndexedInstancedIndirect_Hook),
+         reinterpret_cast<void**>(&s.originalDrawIndexedInstancedIndirect)},
+        {vt.drawInstancedIndirect, reinterpret_cast<void*>(&DrawInstancedIndirect_Hook),
+         reinterpret_cast<void**>(&s.originalDrawInstancedIndirect)},
         {vt.omSetRenderTargets, reinterpret_cast<void*>(&OMSetRenderTargets_Hook),
          reinterpret_cast<void**>(&s.originalOMSetRenderTargets)},
         {vt.rsSetViewports, reinterpret_cast<void*>(&RSSetViewports_Hook),
          reinterpret_cast<void**>(&s.originalRSSetViewports)},
     };
+    std::size_t hooked = 0;
     for (std::size_t i = 0; i < sizeof installs / sizeof installs[0]; ++i) {
         setPhase(60 + static_cast<LONG>(i));
         if (installs[i].target == nullptr) continue;
@@ -800,18 +1105,19 @@ HRESULT installSteps() {
             earlyLogf("RLCAP1 fail hook slot=%zu target=%p", i, installs[i].target);
             return RL_E_HOOK_CREATE_0 + static_cast<HRESULT>(i);
         }
+        ++hooked;
     }
 
-    setPhase(70);
+    setPhase(75);
     if (!succeeded(s.hooks->enableAll())) {
         earlyLogRaw("RLCAP1 fail enableAll");
         return RL_E_HOOK_ENABLE;
     }
 
-    setPhase(80);
+    setPhase(85);
     s.observing = true;
     s.installed = true;
-    earlyLogRaw("RLCAP1 armed hooks=9 mode=observe");
+    earlyLogf("RLCAP1 armed hooks=%zu mode=observe", hooked);
     return S_OK;
 }
 

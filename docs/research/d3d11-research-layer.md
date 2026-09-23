@@ -210,6 +210,70 @@ loader). Correção: depois do exit code != 0, a base real é resolvida por
   sã; probe também `0xC0000005` sem ficheiro → a falha é de entrega da
   thread remota e não se regressa a D3D11 até a resolver.
 
+**Run 6 (lab pack v3.3) — cadeia completa PASS: entrada → probe → vtables →
+hooks → Present; draw path em aberto.** Com a base real de 64 bits, o probe
+executou in-process e devolveu `0x12345678` (`RenderLift.probe` criado), o
+install armou **9/9** hooks e `Present_Hook` disparou todos os frames até
+`RLCAP1 cap frames=600`. Mas **TODOS** os contadores de contexto ficaram a
+zero (`drawstat calls=0 maxidx=0 maxvtx=0`, zero eventos `rt`/`vp`) — o
+jogo estava sem foco/janela fechada durante grande parte da janela.
+Conclusão registada: `Present path = PROVEN` ≠ `draw path = PROVEN`; um
+Install com HRESULT 0 e Present observado **não** provam o caminho de draw.
+
+### 5.2 Checkpoint 0.2-final: prova empírica do draw path (v3.4)
+
+Pergunta aberta: *por que `calls=0` com Present vivo?* Hipóteses mantidas
+propositadamente separadas — a v3.4 foi desenhada para **distingui-las**,
+não para declarar nenhuma antes da evidência:
+
+- **H1 — cobertura insuficiente de slots**: só os slots 12/13 (`DrawIndexed`,
+  `Draw`) alimentavam o drawstat; uma engine moderna (RAGE) renderiza quase
+  tudo via `DrawIndexedInstanced`(20)/`DrawInstanced`(21)/`DrawAuto`(38)/
+  indirect(39/40), nenhum dos quais estava hookado.
+- **H2 — caminho de contexto diferente**: os hooks ancoram nas funções do
+  **immediate context** do nosso probe; se o jogo renderizar num contexto de
+  classe/implementação diferente (p.ex. maioritariamente *deferred contexts*,
+  ou modo DX10/DX10.1 do GTA V — o swapchain `Present` é DXGI comum e
+  dispararia na mesma), o nosso código nunca entra no caminho.
+- **H3 — contaminação de estado**: janela de 600 frames com o GTA sem
+  foco/em pausa/menu → pouco ou nenhum rendering de cena gera draws.
+
+Arquitetura da prova (OBSERVE-only; loader congelado; alterações apenas na
+DLL — zero efeito visual, zero steering, zero redirect/shader/resolução):
+
+- **14 hooks** (9 anteriores + DrawIndexedInstanced(20), DrawInstanced(21),
+  DrawAuto(38), DrawIndexedInstancedIndirect(39), DrawInstancedIndirect(40));
+- **first-fire** obrigatório por slot: `RLCAP1 first slot=<nome> ctx=0x…`
+  (primeira ocorrência de cada um dos 9 hooks de contexto);
+- **contextos distintos**: `RLCAP1 context first=0x…`/`context new=0x…`
+  (conjunto limitado de 32; overflow contado, sem log por chamada);
+- por frame: `RLCAP1 draws frame=N d= di= diinst= dinst= dauto= diind=
+  dinstind= om= vp=` (linha raw — o `drawstat`/wire-format legado fica
+  **intocado** e o inspector offline ignora tags desconhecidas);
+- **resumo da janela** no cap: `RLCAP1 summary frames=N … draws=T ctxs=C
+  ctxovf=O verdict=DRAWPATH_ACTIVE|DRAWPATH_ZERO` antes do terminador
+  legado `RLCAP1 cap frames=N`;
+- **janela de 2000 frames** por omissão (`RENDERLIFT_OBSERVE_FRAMES`
+  continua a sobrepor — lido do ambiente do processo-alvo; definir antes de
+  lançar o jogo);
+- **re-arm**: nova chamada remota a `RenderLiftInstall` com `installed==true`
+  não é mais no-op — repõe frame/contadores/primeiros-disparos/contextos,
+  re-lê o cap e reabre a janela: `RLCAP1 rearm cap=2000` (hooks ficam
+  instalados; DLL nunca é recarregada; loader intocado).
+
+Árvore de decisão pós-teste (jogo **focado + gameplay ativo** durante toda
+a janela — H3 eliminada por protocolo):
+
+| Observação | Conclusão |
+|---|---|
+| Algum slot novo dispara (`first slot=DrawIndexedInstanced…`), contadores >0 | **H1 confirmada** — o jogo passa pelo immediate context nesses slots; draw path PROVEN |
+| Só 12/13 disparam | draw path PROVEN com cobertura antiga bastante |
+| Draws a zero mas `om=`/`vp=` >0 no mesmo ctx | immediate context usado sem draws nesses slots → procurar outros slots/indirect (re-analisar) |
+| TODOS os hooks de contexto a zero com jogo focado a renderizar | **H2** — o caminho de render não usa as funções ancoradas (deferred-domínio ou modo não-D3D11); `ctxs=0` no summary corrobora |
+| Present para durante a janela | contaminação de protocolo (jogo parou de apresentar) — repetir com foco garantido |
+
+**Resultado: PENDENTE do teste do utilizador (lab pack v3.4).**
+
 ## 6. Roadmap da camada
 
 - **0.2 (esta)**: observação, classificação offline, inspector.

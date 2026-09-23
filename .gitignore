@@ -58,3 +58,9 @@ __pycache__/
 #    explicitly under third_party/<name>/ with their licenses) ──
 third_party/*.zip
 third_party/*.tar.gz
+
+# ── Local lab-pack workshop (assembled here, shipped via dist-pack branch) ──
+.arena-pack/
+.arena-inspect/
+.arena-labme.txt
+renderlift-*-lab-pack-win64*.zip

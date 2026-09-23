@@ -103,6 +103,38 @@ The engine inside the product — **ALRR Core** — keeps its own version and is
   `EnumProcessModulesEx(LIST_MODULES_ALL)` + `GetModuleBaseNameW`; the
   entry-page `VirtualQueryEx` guard stays as the final check.
 
+### Added — 0.2 draw-path proof (v3.4, after v3.3 full-chain PASS)
+- **Context slot coverage 9 → 14 hooks** in `RenderLift.D3D11.dll`: the
+  drawstat legacy path (`DrawIndexed`(12)/`Draw`(13)) is joined by
+  `DrawIndexedInstanced`(20), `DrawInstanced`(21), `DrawAuto`(38),
+  `DrawIndexedInstancedIndirect`(39) and `DrawInstancedIndirect`(40) — all
+  counting-only measured passthroughs (still ADR 0003 observe: no redirect,
+  no resolution/shader/visual change, no steering).
+- **First-fire evidence** for every context hook:
+  `RLCAP1 first slot=<name> ctx=0x…` once per slot per window.
+- **Distinct-context tracking**: `RLCAP1 context first=0x…` / `context
+  new=0x…`, bounded 32-entry set, overflow counted for the summary.
+- **Per-frame diagnostic line** `RLCAP1 draws frame=N d= di= diinst= dinst=
+  dauto= diind= dinstind= om= vp=` — raw line (the legacy
+  `drawstat`/`cap frames=` wire format is byte-identical; the parser
+  tolerates unknown tags and the offline inspector skips them).
+- **Window summary at the cap**: `RLCAP1 summary frames=N … draws=T ctxs=C
+  ctxovf=O verdict=DRAWPATH_ACTIVE|DRAWPATH_ZERO` written before the legacy
+  `RLCAP1 cap frames=N` terminator — answers "which path did the game
+  actually use" without reading thousands of per-frame lines.
+- **Re-arm**: a remote `RenderLiftInstall` call while already installed is
+  no longer a silent no-op — it reopens a fresh observation window in place
+  (`RLCAP1 rearm cap=N`): frame counter, per-frame/window counters,
+  first-fire mask and context set reset; hooks stay installed; the DLL is
+  never reloaded; the loader is untouched.
+- **Default observation window 600 → 2000 frames** (the v3.4 main lab
+  window; `RENDERLIFT_OBSERVE_FRAMES` still overrides, read from the target
+  process environment — set before launching the game).
+- Research doc §5.2 records the H1/H2/H3 hypothesis separation (slot
+  coverage vs context path vs focus-state contamination) and the
+  post-test decision tree; success criterion for this checkpoint is the
+  empirical draw path, not `Install=0`/`Present observed`.
+
 ### Added — 0.2 groundwork (hook engine + D3D11 module)
 - **MinHook 1.3.4 vendored** (`third_party/minhook`, BSD-2) — the D3D backend
   hook engine; notices updated.
