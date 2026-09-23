@@ -968,7 +968,7 @@ RealProbeResult runRealDiscovery(IDXGISwapChain* swapchain) {
         r.device = dev;
         r.featureLevel = static_cast<unsigned long>(dev->GetFeatureLevel());
         void* const* devVt = *reinterpret_cast<void* const**>(dev);
-        r.devVtable = devVt;
+        r.devVtable = static_cast<const void*>(devVt);
         r.devTex2D = devVt[slot::CreateTexture2D];
         r.devRtv = devVt[slot::CreateRenderTargetView];
         r.devDsv = devVt[slot::CreateDepthStencilView];
@@ -983,7 +983,7 @@ RealProbeResult runRealDiscovery(IDXGISwapChain* swapchain) {
             r.context = ctx;
             r.ctxType = static_cast<unsigned long>(ctx->GetType());
             void* const* ctxVt = *reinterpret_cast<void* const**>(ctx);
-            r.ctxVtable = ctxVt;
+            r.ctxVtable = static_cast<const void*>(ctxVt);
             r.ctxDrawIndexed = ctxVt[slot::DrawIndexed];
             r.ctxDraw = ctxVt[slot::Draw];
             r.ctxDrawIndexedInstanced = ctxVt[slot::DrawIndexedInstanced];
