@@ -91,6 +91,17 @@ The engine inside the product — **ALRR Core** — keeps its own version and is
   (DEP/ASLR/CFG/ACG/Signature/ImageLoad/ExtensionPoint). Probe works →
   frontier is healthy, focus returns to `RenderLiftInstall`; probe also
   dies `0xC0000005` → the failure is in remote-thread delivery itself.
+- **ROOT CAUSE of the v2–v3.1 crash saga (loader)**: `GetExitCodeThread`
+  returns a 32-bit DWORD, but remote `LoadLibraryW` returns a 64-bit
+  HMODULE — when GTA V maps the module above 4 GB, the loader used the
+  TRUNCATED low half as the remote base. RVA-correct + base-wrong =
+  unmapped VA: the probe run proved it with `VirtualQueryEx` (FREE /
+  NOACCESS) and the earlier runs crashed with instruction-fetch
+  `0xC0000005` at that exact wrong VA (our DLL code never executed — the
+  D3D11/MinHook/ABI candidates were innocent all along). Fixed: after a
+  non-zero exit code (success proof only), the real base is resolved via
+  `EnumProcessModulesEx(LIST_MODULES_ALL)` + `GetModuleBaseNameW`; the
+  entry-page `VirtualQueryEx` guard stays as the final check.
 
 ### Added — 0.2 groundwork (hook engine + D3D11 module)
 - **MinHook 1.3.4 vendored** (`third_party/minhook`, BSD-2) — the D3D backend

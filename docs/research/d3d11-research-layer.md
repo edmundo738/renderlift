@@ -181,10 +181,34 @@ fronteira seguinte a isolar.
   **aborta a chamada** se a página não for executável — diagnóstico sem
   crash; e despeja as mitigações do processo (`GetProcessMitigationPolicy`:
   DEP/ASLR/CFG/ACG/Signature/ImageLoad/ExtensionPoint);
-- leitura: probe marca + `0x12345678` → fronteira sã, foco volta ao entry
-  de `RenderLiftInstall`; probe também termina `0xC0000005` sem ficheiro →
-  a falha está na **entrega** da thread remota (stack/anti-tamper/EDR), e
-  NÃO se volta a D3D11 até resolver isso.
+**Run 5 (probe v3.2) — a proteção disparou e apanhou a CAUSA-RAIZ de
+todos os crashes anteriores.** O loader imprimiu, *antes* de qualquer
+chamada remota:
+
+```
+RenderLift.D3D11.dll loaded remotely at 0x0000000010930000
+export RenderLiftEntryProbe at RVA=0x00005ed0, remote VA=0x0000000010935ED0
+entry page: state=FREE type=? protect=NOACCESS => NOT EXECUTABLE
+→ chamada abortada (diagnóstico sem crash)
+```
+
+A "base" era perfeitamente 32-bit, mas o param remoto fora alocado em
+`0x26D5DD20000` (>4 GB): `LoadLibraryW` devolve **HMODULE de 64 bits** e
+`GetExitCodeThread` lê apenas um **DWORD de 32 bits** — o loader estava a
+usar a **metade baixa truncada** da base real. RVA certo + base errada =
+endereço não mapeado. Isto explica deterministicamente TODA a saga
+(v2/v3/v3.1): `CreateRemoteThread` para VA não mapeada → instruction-fetch
+`0xC0000005` imediato → WER "unknown module" com fault offset absoluto ==
+a VA errada → zero evidência (o nosso código **nunca chegou a executar** em
+nenhuma corrida — D3D11/MinHook/ABI eram inocentes downstream de um bug do
+loader). Correção: depois do exit code != 0, a base real é resolvida por
+`EnumProcessModulesEx(LIST_MODULES_ALL)` + `GetModuleBaseNameW` (HMODULE de
+64 bits genuíno), com o exit code impresso apenas como prova de sucesso; e
+  o `VirtualQueryEx` do entry permanece como guarda final antes de chamar.
+
+  Regra geral do probe (mantém-se): probe marca + `0x12345678` → fronteira
+  sã; probe também `0xC0000005` sem ficheiro → a falha é de entrega da
+  thread remota e não se regressa a D3D11 até a resolver.
 
 ## 6. Roadmap da camada
 

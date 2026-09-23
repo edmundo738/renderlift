@@ -47,6 +47,7 @@
 #include <cstring>
 #include <string>
 #include <vector>
+#include <wchar.h>
 
 #pragma comment(lib, "psapi.lib")
 
@@ -96,6 +97,36 @@ std::wstring absolutePath(const std::wstring& path) {
 
 // Inject the DLL with the remote-LoadLibraryW trick; on success returns true
 // and fills remoteModule with the DLL's base address inside the target.
+// Resolve the injected module's FULL 64-bit remote base by enumeration.
+//
+// Why not trust the LoadLibraryW thread's exit code? GetExitCodeThread
+// returns a 32-bit DWORD — but LoadLibraryW returns a 64-bit HMODULE. When
+// the target maps the module above 4 GB, the exit code is the TRUNCATED
+// low half of the real base. That exact bug silently sent lab runs v2–v3.1
+// to CreateRemoteThread at an unmapped address (VirtualQueryEx: FREE /
+// NOACCESS; instruction-fetch 0xC0000005; WER "unknown module", fault
+// offset == the wrong VA; zero evidence possible from our DLL).
+// EnumProcessModulesEx returns the genuine 64-bit module handles.
+HMODULE findRemoteModuleBase(HANDLE process, const std::wstring& dllPath) {
+    const wchar_t* baseName = wcsrchr(dllPath.c_str(), L'\\');
+    baseName = (baseName != nullptr) ? baseName + 1 : dllPath.c_str();
+    HMODULE modules[1024];
+    DWORD needed = 0;
+    if (!EnumProcessModulesEx(process, modules, sizeof modules, &needed,
+                              LIST_MODULES_ALL)) {
+        std::fprintf(stderr, "warn: EnumProcessModulesEx failed (%lu)\n", GetLastError());
+        return nullptr;
+    }
+    const DWORD count = (needed < sizeof modules) ? (needed / sizeof(HMODULE))
+                                                  : (sizeof modules / sizeof(HMODULE));
+    for (DWORD i = 0; i < count; ++i) {
+        wchar_t name[MAX_PATH]{};
+        if (GetModuleBaseNameW(process, modules[i], name, MAX_PATH) == 0) continue;
+        if (_wcsicmp(name, baseName) == 0) return modules[i];
+    }
+    return nullptr;
+}
+
 bool injectDll(HANDLE process, const std::wstring& dllPath, HMODULE* remoteModule) {
     const std::wstring fullPath = absolutePath(dllPath);
     const std::size_t bytes = (fullPath.size() + 1) * sizeof(wchar_t);
@@ -137,7 +168,22 @@ bool injectDll(HANDLE process, const std::wstring& dllPath, HMODULE* remoteModul
             break;
         }
 
-        *remoteModule = reinterpret_cast<HMODULE>(static_cast<uintptr_t>(remoteHandle));
+        // The exit code only proves "load succeeded" — it is 32-bit and can
+        // be a truncated HMODULE. Resolve the true 64-bit base by enum.
+        std::printf("remote LoadLibraryW exit=0x%08lx (32-bit code, NOT the base)\n",
+                    remoteHandle);
+        HMODULE resolved = findRemoteModuleBase(process, fullPath);
+        if (resolved == nullptr) {
+            std::fprintf(stderr,
+                         "error: module not found in target after load (unloaded?)\n");
+            break;
+        }
+        if (reinterpret_cast<uintptr_t>(resolved) != static_cast<uintptr_t>(remoteHandle)) {
+            std::printf("note: exit code was truncated — real base is 0x%p (was 0x%08x)\n",
+                        static_cast<void*>(resolved), remoteHandle);
+        }
+
+        *remoteModule = resolved;
         ok = true;
     } while (false);
 
