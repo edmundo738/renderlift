@@ -1,77 +1,55 @@
 ═══════════════════════════════════════════════════════════════════════════
- RenderLift 0.2 — PACOTE DE LABORATÓRIO v3.2 (Windows x64) · MODO OBSERVE
- Render less. Reconstruct more. · eduardo × Arena · 2026-09-21
- EXPERIMENTO DA FRONTEIRA (CreateRemoteThread → remote entry)
- build: commits 33ca350(+fixes) · CI run 35667648232 (MSVC, 0 erros, 67/67)
+ RenderLift 0.2 — PACOTE DE LABORATÓRIO v3.3 (Windows x64) · MODO OBSERVE
+ Render less. Reconstruct more. · eduardo × Arena · 2026-09-23
+ FIX DA BASE REMOTA (64-bit) — o crash histórico está explicado e tratado
+ build: CI run 35837800340 (MSVC, 0 erros, 67/67 testes)
 ═══════════════════════════════════════════════════════════════════════════
 
-★ PORQUE ESTA v3.2
-  A v3.1 respondeu com duplo negativo: 0xC0000005, sem RenderLift.entry e
-  sem log em NENHUM dos sinks. Prova restrita: nenhuma evidência sobreviveu.
-  Antes de mais suposições, isolamos a fronteira com um STUB MÍNIMO:
-  • RenderLiftEntryProbe — novo export na DLL: sem CRT, sem STL, sem
-    globais, sem D3D11, sem MinHook, sem SEH. Só kernel32 + um literal
-    read-only + o path passado por parâmetro. Escreve "RLPROBE1 ok" e
-    retorna SEMPRE 0x12345678;
-  • o Loader NEW valida a página do entry com VirtualQueryEx ANTES de
-    chamar (State/Type/Protect/AllocationBase — aborta se não executável,
-    diagnóstico SEM crash) e despeja as MITIGAÇÕES do processo
-    (DEP/ASLR/CFG/ACG/Signature/ImageLoad/ExtensionPoint).
+★ O QUE ESTAVA ERRADO (e o que a v3.3 corrige no LOADER)
+  O teu teste do probe apanhou-o: o Loader lia a "base remota" do código de
+  saída da thread do LoadLibraryW remoto — um DWORD de 32 bits. Mas o
+  HMODULE é 64 bits: no GTA V a DLL é mapeada ACIMA de 4 GB, a metade
+  superior perdia-se, e o RVA certo era somado a uma base ERRADA → endereço
+  não mapeado → todos os 0xC0000005 desde o início (a nossa DLL nunca
+  chegou a executar em nenhuma corrida — D3D11/MinHook eram inocentes).
+  A v3.3 resolve a base REAL via EnumProcessModulesEx + GetModuleBaseNameW
+  e MANTÉM o guarda VirtualQueryEx antes de qualquer chamada remota.
 
-══════════════════════════════════ O EXPERIMENTO (faz ISTO primeiro) ─
+══════════════════════════════════ PASSO 1 — REPETE O PROBE ─
   Com GTA5.exe vivo no Modo História, em C:\RenderLift-lab\:
 
-    RenderLift.Loader.exe --exe GTA5.exe --dll RenderLift.D3D11.dll ^
+    RenderLift.Loader.exe --pid <PID> --dll .\RenderLift.D3D11.dll ^
       --call RenderLiftEntryProbe --param "C:\RenderLift-lab\RenderLift.probe"
 
-  (numa linha só, se não usares o ^ do cmd)
-
-  SAÍDA ESPERADA — o Loader agora imprime TUDO:
-    target pid NNNN opened
-    mitig DEP: ... / ASLR: ... / CFG: ... / ACG: ... / SIGN: ... / IMGLOAD: ...
-    C:\RenderLift-lab\RenderLift.D3D11.dll loaded remotely at 0x...
-    param staged remotely at 0x... ("C:\RenderLift-lab\RenderLift.probe", 39 bytes)
-    export RenderLiftEntryProbe at RVA=0x00005ed0, remote VA=0x...
-    entry page: base=0x... region=0x... state=COMMIT type=IMAGE
-                protect=EXECUTE_READ(0x20) allocBase=0x... => EXECUTABLE
+  DIFERENÇA ESPERADA no output (novas linhas):
+    remote LoadLibraryW exit=0x... (32-bit code, NOT the base)
+    note: exit code was truncated — real base is 0x00007FF... (was 0x...)
+    entry page: ... type=IMAGE protect=EXECUTE_READ ... => EXECUTABLE
     remote RenderLiftEntryProbe returned 0x12345678
 
-  E deve aparecer um ficheiro novo:
-    C:\RenderLift-lab\RenderLift.probe     (conteúdo: "RLPROBE1 ok")
+  E o ficheiro C:\RenderLift-lab\RenderLift.probe com "RLPROBE1 ok".
 
-════════════════════════════════════════ LEITURA DO RESULTADO ─
-  CASO 1 — ficheiro .probe existe + retorno 0x12345678:
-    A fronteira CreateRemoteThread → remote entry está SÃ nesse processo.
-    O foco volta para a entrada de RenderLiftInstall (o que muda em relação
-    ao stub: frame maior, /GS, SEH table entries, mais IAT calls).
-  CASO 2 — "entry page: ... => NOT EXECUTABLE":
-    O Loader ABORTA antes de chamar — a página do export não é executável
-    no processo alvo (DEP/mapeamento anómalo). Manda a linha toda: isso é
-    o diagnóstico completo, sem crash.
-  CASO 3 — retorno 0xC0000005 SEM ficheiro .probe:
-    Nem o corpo mínimo de 3 calls kernel32 sobrevive → a falha é de
-    ENTREGA da thread remota (stack/anti-tamper/EDR do processo). NÃO
-    voltamos a D3D11/MinHook; o próximo passo passa a ser uma via de
-    injeção diferente (e.g. APC/loader-aware/shim), decidida com ESTES
-    dados na mão.
-
-  EM QUALQUER CASO manda-me: a saída COMPLETA do Loader (com as linhas
-  mitig + entry page) e diz se o RenderLift.probe apareceu.
-
-══════════════════════════════ SE CORRER BEM: o teste normal ─
-  Depois do probe (e só se o CASO 1 se confirmar), o fluxo normal:
-    RenderLift.Loader.exe --exe GTA5.exe --dll RenderLift.D3D11.dll
-  (valida a página do entry antes, imprime idem) → "module armed" → joga
-  ~20 s (600 frames) → log em C:\RenderLift-lab\RenderLift.D3D11.log +
-  espelho em %TEMP% + RenderLift.entry (marca binária de entrada).
-  Análise offline:
+══════════════════════════ PASSO 2 — (só se o probe passar) ─
+  Instalação normal:
+    RenderLift.Loader.exe --pid <PID> --dll .\RenderLift.D3D11.dll
+  Esperado: entry page EXECUTABLE (type=IMAGE) → install com checkpoints
+  cp=1..80 → "module armed" → RenderLift.entry + RenderLift.D3D11.log na
+  pasta-lab (e espelho em %TEMP%) → joga ~20 s (600 frames) →
     RenderLift.CLI.exe inspect "C:\RenderLift-lab\RenderLift.D3D11.log"
+  Manda: saída do Loader COMPLETA + o(s) log(s) + RenderLift.probe.
+
+════════════════════════════════════════ LEITURA DE FALHAS ─
+  • "module not found in target after load" — a DLL descarregou entre o
+    LoadLibrary e a enumeração (descarregador de terceiros?). Diz-me.
+  • "entry page ... NOT EXECUTABLE" — manda a linha toda (State/Type/
+    Protect): diagnóstico completo sem crash.
+  • probe 0xC0000005 sem ficheiro — entrega da thread remota; manda as
+    linhas mitig + entry page.
 
 ──────────────────────── PASSO 0 — MARK OF THE WEB ─
   Unblock no zip (Propriedades → Desbloquear) antes de extrair, ou:
     Get-ChildItem "C:\RenderLift-lab" -Recurse | Unblock-File
-  ⚠️ O Loader v3.2 é binário NOVO (36 864 bytes): apaga o antigo, extrai
-  tudo de novo. Mantém a tua exclusão do Defender para C:\RenderLift-lab.
+  ⚠️ Loader NOVO v3.3 = 37 888 bytes. Apaga os binários antigos.
 
 ⚠️ REGRAS DE SEGURANÇA (invioláveis)
   • APENAS Modo História. NUNCA GTA Online (anti-cheat).
@@ -79,11 +57,12 @@
   • VC++ Redist 2015-2022 x64: https://aka.ms/vs/17/release/vc_redist.x64.exe
 
 ────────────────────────────────────────────── O QUE ESTÁ DENTRO ─
-  Build: Windows CI (MSVC) run 35667648232 · 0 erros · 67/67 testes.
-  DLL: export contract 4/4 verificado no build e em evidência anexa:
-    [1] RenderLiftEntryProbe   RVA=0x00005ed0   (novo — stub da fronteira)
+  Build: Windows CI (MSVC) run 35837800340 · 0 erros · 67/67 testes.
+  Export contract 4/4 (evidência anexa RenderLift.D3D11.exports.txt):
+    [1] RenderLiftEntryProbe   RVA=0x00005ed0
     [2] RenderLiftFrameCount   RVA=0x00005f60
     [3] RenderLiftInstall      RVA=0x00005f80
     [4] RenderLiftUninstall    RVA=0x00006190
-  Protocolo completo das corridas: docs/research/d3d11-research-layer.md
+  Narrativa completa das 5 corridas + root cause:
+    docs/research/d3d11-research-layer.md §5.1
 ═══════════════════════════════════════════════════════════════════════════
