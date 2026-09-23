@@ -5,12 +5,11 @@ MSBuild version 18.9.1+a81b43525 for .NET Framework
   buffer.c
   Building Custom Rule D:/a/renderlift/renderlift/tools/renderlift-loader/CMakeLists.txt
   Building Custom Rule D:/a/renderlift/renderlift/src/core/CMakeLists.txt
-  main.cpp
   Json.cpp
+  main.cpp
   GameProfile.cpp
   hook.c
   trampoline.c
-  hde64.c
 C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.51.36231\include\xutility(5094,18): warning C4244: '=': conversion from 'const wchar_t' to 'char', possible loss of data [D:\a\renderlift\renderlift\build\tools\renderlift-loader\renderlift-loader.vcxproj]
   (compiling source file '../../../tools/renderlift-loader/main.cpp')
       C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.51.36231\include\xutility(5094,18):
@@ -51,19 +50,20 @@ C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.51.36231
           ]
   
   Generating Code...
+  hde64.c
   Generating Code...
-  minhook.vcxproj -> D:\a\renderlift\renderlift\build\lib\Release\minhook.lib
   renderlift-loader.vcxproj -> D:\a\renderlift\renderlift\build\bin\Release\RenderLift.Loader.exe
+  minhook.vcxproj -> D:\a\renderlift\renderlift\build\lib\Release\minhook.lib
   rl-core.vcxproj -> D:\a\renderlift\renderlift\build\lib\Release\rl-core.lib
-  Building Custom Rule D:/a/renderlift/renderlift/src/resolution/CMakeLists.txt
   Building Custom Rule D:/a/renderlift/renderlift/backends/CMakeLists.txt
+  Building Custom Rule D:/a/renderlift/renderlift/src/resolution/CMakeLists.txt
   Building Custom Rule D:/a/renderlift/renderlift/src/reconstruction/CMakeLists.txt
-  ResolutionManager.cpp
   HookEngine.cpp
+  ResolutionManager.cpp
   Reconstruction.cpp
   SpatialUpscaler.cpp
-  DynamicResolutionController.cpp
   Steering.cpp
+  DynamicResolutionController.cpp
   Generating Code...
   EdgeUpscaler.cpp
   CaptureFormat.cpp
@@ -79,27 +79,36 @@ D:\a\renderlift\renderlift\backends\common\src\obs\ResourceClassifier.cpp(89,56)
   Building Custom Rule D:/a/renderlift/renderlift/backends/CMakeLists.txt
   Building Custom Rule D:/a/renderlift/renderlift/backends/CMakeLists.txt
   Building Custom Rule D:/a/renderlift/renderlift/backends/CMakeLists.txt
-  Building Custom Rule D:/a/renderlift/renderlift/backends/CMakeLists.txt
-  Building Custom Rule D:/a/renderlift/renderlift/backends/CMakeLists.txt
-  Building Custom Rule D:/a/renderlift/renderlift/backends/CMakeLists.txt
-  D3D12Backend.cpp
-  D3D10Backend.cpp
-  D3D11Backend.cpp
   VulkanBackend.cpp
-  D3D11Module.cpp
+  D3D10Backend.cpp
   D3D9Backend.cpp
+  Building Custom Rule D:/a/renderlift/renderlift/backends/CMakeLists.txt
+  D3D11Module.cpp
   rl-backend-vulkan.vcxproj -> D:\a\renderlift\renderlift\build\lib\Release\rl-backend-vulkan.lib
   rl-backend-d3d10.vcxproj -> D:\a\renderlift\renderlift\build\lib\Release\rl-backend-d3d10.lib
+  Building Custom Rule D:/a/renderlift/renderlift/backends/CMakeLists.txt
+  D3D12Backend.cpp
+  rl-backend-d3d9.vcxproj -> D:\a\renderlift\renderlift\build\lib\Release\rl-backend-d3d9.lib
+  Building Custom Rule D:/a/renderlift/renderlift/backends/CMakeLists.txt
+  D3D11Backend.cpp
+D:\a\renderlift\renderlift\backends\d3d11\src\win\D3D11Module.cpp(500,13): error C3646: 'probe': unknown override specifier [D:\a\renderlift\renderlift\build\backends\rl-backend-d3d11.vcxproj]
+D:\a\renderlift\renderlift\backends\d3d11\src\win\D3D11Module.cpp(500,5): error C4430: missing type specifier - int assumed. Note: C++ does not support default-int [D:\a\renderlift\renderlift\build\backends\rl-backend-d3d11.vcxproj]
+D:\a\renderlift\renderlift\backends\d3d11\src\win\D3D11Module.cpp(518,32): warning C4996: 'getenv': This function or variable may be unsafe. Consider using _dupenv_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details. [D:\a\renderlift\renderlift\build\backends\rl-backend-d3d11.vcxproj]
+D:\a\renderlift\renderlift\backends\d3d11\src\win\D3D11Module.cpp(1061,26): error C2039: 'probe': is not a member of 'rl::backend::`anonymous-namespace'::ModuleState' [D:\a\renderlift\renderlift\build\backends\rl-backend-d3d11.vcxproj]
+      D:\a\renderlift\renderlift\backends\d3d11\src\win\D3D11Module.cpp(463,8):
+      see declaration of 'rl::backend::`anonymous-namespace'::ModuleState'
+  
+D:\a\renderlift\renderlift\backends\d3d11\src\win\D3D11Module.cpp(1061,22): error C2530: 'p': references must be initialized [D:\a\renderlift\renderlift\build\backends\rl-backend-d3d11.vcxproj]
+D:\a\renderlift\renderlift\backends\d3d11\src\win\D3D11Module.cpp(1327,7): error C2039: 'probe': is not a member of 'rl::backend::`anonymous-namespace'::ModuleState' [D:\a\renderlift\renderlift\build\backends\rl-backend-d3d11.vcxproj]
+      D:\a\renderlift\renderlift\backends\d3d11\src\win\D3D11Module.cpp(463,8):
+      see declaration of 'rl::backend::`anonymous-namespace'::ModuleState'
+  
   rl-backend-d3d12.vcxproj -> D:\a\renderlift\renderlift\build\lib\Release\rl-backend-d3d12.lib
   rl-backend-d3d11-kernel.vcxproj -> D:\a\renderlift\renderlift\build\lib\Release\rl-backend-d3d11-kernel.lib
-D:\a\renderlift\renderlift\backends\d3d11\src\win\D3D11Module.cpp(500,32): warning C4996: 'getenv': This function or variable may be unsafe. Consider using _dupenv_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details. [D:\a\renderlift\renderlift\build\backends\rl-backend-d3d11.vcxproj]
-  rl-backend-d3d9.vcxproj -> D:\a\renderlift\renderlift\build\lib\Release\rl-backend-d3d9.lib
   Building Custom Rule D:/a/renderlift/renderlift/tools/renderlift-cli/CMakeLists.txt
   Building Custom Rule D:/a/renderlift/renderlift/tests/CMakeLists.txt
   main.cpp
   test_main.cpp
-     Creating library D:/a/renderlift/renderlift/build/lib/Release/RenderLift.D3D11.lib and object D:/a/renderlift/renderlift/build/lib/Release/RenderLift.D3D11.exp
-  rl-backend-d3d11.vcxproj -> D:\a\renderlift\renderlift\build\bin\Release\RenderLift.D3D11.dll
   test_types.cpp
 D:\a\renderlift\renderlift\tools\renderlift-cli\main.cpp(90,14): warning C4996: 'sscanf': This function or variable may be unsafe. Consider using sscanf_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details. [D:\a\renderlift\renderlift\build\tools\renderlift-cli\renderlift-cli.vcxproj]
   test_json.cpp
@@ -117,4 +126,3 @@ D:\a\renderlift\renderlift\tools\renderlift-cli\main.cpp(90,14): warning C4996: 
   test_integration.cpp
   Generating Code...
   renderlift-tests.vcxproj -> D:\a\renderlift\renderlift\build\bin\Release\renderlift-tests.exe
-  Building Custom Rule D:/a/renderlift/renderlift/CMakeLists.txt
