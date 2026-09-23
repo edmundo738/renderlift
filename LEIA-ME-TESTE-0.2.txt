@@ -1,55 +1,103 @@
 ═══════════════════════════════════════════════════════════════════════════
- RenderLift 0.2 — PACOTE DE LABORATÓRIO v3.3 (Windows x64) · MODO OBSERVE
+ RenderLift 0.2 — PACOTE DE LABORATÓRIO v3.4 (Windows x64) · MODO OBSERVE
  Render less. Reconstruct more. · eduardo × Arena · 2026-09-23
- FIX DA BASE REMOTA (64-bit) — o crash histórico está explicado e tratado
- build: CI run 35837800340 (MSVC, 0 erros, 67/67 testes)
+ CHECKPOINT: PROVA EMPÍRICA DO DRAW PATH (GTA V, janela de 2000 frames)
+ build: CI run 35847348315 · commit 9504b2f · MSVC 0 erros · 67/67 testes
 ═══════════════════════════════════════════════════════════════════════════
 
-★ O QUE ESTAVA ERRADO (e o que a v3.3 corrige no LOADER)
-  O teu teste do probe apanhou-o: o Loader lia a "base remota" do código de
-  saída da thread do LoadLibraryW remoto — um DWORD de 32 bits. Mas o
-  HMODULE é 64 bits: no GTA V a DLL é mapeada ACIMA de 4 GB, a metade
-  superior perdia-se, e o RVA certo era somado a uma base ERRADA → endereço
-  não mapeado → todos os 0xC0000005 desde o início (a nossa DLL nunca
-  chegou a executar em nenhuma corrida — D3D11/MinHook eram inocentes).
-  A v3.3 resolve a base REAL via EnumProcessModulesEx + GetModuleBaseNameW
-  e MANTÉM o guarda VirtualQueryEx antes de qualquer chamada remota.
+★ O QUE A v3.4 RESPONDE (e só isto — sem downscale, sem ALRR, sem redirect,
+  sem shaders, sem qualquer alteração visual ou steering)
+  "Por onde é que o GTA V está realmente a passar para produzir os frames?"
+  A v3.3 provou: DLL entra, vtables resolvem, 9 hooks armam, Present dispara
+  todos os frames. MAS  Install=0 + Present observado ≠ draw path provado.
+  A v3.4 alarga a superfície de 9 → 14 hooks e torna o caminho de draw
+  diretamente observável.
 
-══════════════════════════════════ PASSO 1 — REPETE O PROBE ─
-  Com GTA5.exe vivo no Modo História, em C:\RenderLift-lab\:
+★ O QUE É NOVO NA DLL (loader 100% CONGELADO — nem um byte de código mudou)
+  • +5 hooks de contexto: DrawIndexedInstanced(20) · DrawInstanced(21) ·
+    DrawAuto(38) · DrawIndexedInstancedIndirect(39) ·
+    DrawInstancedIndirect(40) — todos passthrough de contagem (observe-only)
+  • FIRST-FIRE por slot: "RLCAP1 first slot=<Nome> ctx=0x..." (uma linha por
+    slot por janela — qual método disparou primeiro, em que contexto)
+  • CONTEXTOS DISTINTOS: "RLCAP1 context first=0x..." / "context new=0x..."
+    (máx. 32 registrados; overflow só contado — hot path fica leve)
+  • POR FRAME: "RLCAP1 draws frame=N d= di= diinst= dinst= dauto= diind=
+    dinstind= om= vp=" (o drawstat antigo é preservado byte a byte)
+  • RESUMO DA JANELA no cap (antes do "cap frames=" antigo):
+    "RLCAP1 summary frames=N ... draws=T ctxs=C ctxovf=O
+     verdict=DRAWPATH_ACTIVE|DRAWPATH_ZERO"
+  • JANELA DE OBSERVAÇÃO: 2000 FRAMES POR OMISSÃO (era 600)
+  • RE-ARM: repetir o mesmo comando do Loader abre uma NOVA janela sem
+    recarregar a DLL nem reinjetar — hooks ficam instalados
+    (log: "RLCAP1 rearm cap=2000")
 
-    RenderLift.Loader.exe --pid <PID> --dll .\RenderLift.D3D11.dll ^
-      --call RenderLiftEntryProbe --param "C:\RenderLift-lab\RenderLift.probe"
-
-  DIFERENÇA ESPERADA no output (novas linhas):
-    remote LoadLibraryW exit=0x... (32-bit code, NOT the base)
-    note: exit code was truncated — real base is 0x00007FF... (was 0x...)
-    entry page: ... type=IMAGE protect=EXECUTE_READ ... => EXECUTABLE
-    remote RenderLiftEntryProbe returned 0x12345678
-
-  E o ficheiro C:\RenderLift-lab\RenderLift.probe com "RLPROBE1 ok".
-
-══════════════════════════ PASSO 2 — (só se o probe passar) ─
-  Instalação normal:
-    RenderLift.Loader.exe --pid <PID> --dll .\RenderLift.D3D11.dll
-  Esperado: entry page EXECUTABLE (type=IMAGE) → install com checkpoints
-  cp=1..80 → "module armed" → RenderLift.entry + RenderLift.D3D11.log na
-  pasta-lab (e espelho em %TEMP%) → joga ~20 s (600 frames) →
-    RenderLift.CLI.exe inspect "C:\RenderLift-lab\RenderLift.D3D11.log"
-  Manda: saída do Loader COMPLETA + o(s) log(s) + RenderLift.probe.
-
-════════════════════════════════════════ LEITURA DE FALHAS ─
-  • "module not found in target after load" — a DLL descarregou entre o
-    LoadLibrary e a enumeração (descarregador de terceiros?). Diz-me.
-  • "entry page ... NOT EXECUTABLE" — manda a linha toda (State/Type/
-    Protect): diagnóstico completo sem crash.
-  • probe 0xC0000005 sem ficheiro — entrega da thread remota; manda as
-    linhas mitig + entry page.
-
-──────────────────────── PASSO 0 — MARK OF THE WEB ─
-  Unblock no zip (Propriedades → Desbloquear) antes de extrair, ou:
+═══════════════════════════ PASSO 0 — MARK OF THE WEB ─
+  Extrai o zip para C:\RenderLift-lab\. Apaga binários de packs antigos.
+  Propriedades → Desbloquear no zip, ou em PowerShell:
     Get-ChildItem "C:\RenderLift-lab" -Recurse | Unblock-File
-  ⚠️ Loader NOVO v3.3 = 37 888 bytes. Apaga os binários antigos.
+
+═══════════════════ O TESTE PRINCIPAL — 2000 FRAMES FOCADO ═════════════════
+  O sucesso desta build NÃO é Install=0 nem Present observado — é provar o
+  caminho de draw DURANTE GAMEPLAY REAL. Segue o protocolo à risca:
+
+  1) Inicia o GTA V (Modo História) e carrega o teu save.
+  2) Deixa o jogo EM PRIMEIRO PLANO, a correr (não pauses).
+  3) Em C:\RenderLift-lab\ corre (numa janela à parte, p.ex. com Alt+Tab —
+     o jogo continua a correr):
+       RenderLift.Loader.exe --pid <PID> --dll .\RenderLift.D3D11.dll
+     Esperado: "... real base is 0x00007FF..." → entry page EXECUTABLE →
+     install cp=1..85 → "RLCAP1 armed hooks=14 mode=observe".
+  4) IMEDIATAMENTE volta ao GTA e MANTÉM O JOGO FOCADO.
+  5) JOGA CONTINUAMENTE durante toda a janela (~33 s a 60 fps, ~66 s a 30):
+     anda/corre, vira a câmara, entra num veículo, conduz — varia as
+     situações de rendering.
+  6) Quando o jogo tiver apresentado 2000 frames desde o armed, o log fecha
+     a janela com "RLCAP1 summary ... verdict=..." + "RLCAP1 cap
+     frames=2000". A partir daí podes fazer o que quiseres (a DLL deixa de
+     contar; o overhead cai a ~zero sem afetar o jogo).
+
+  NOVA JANELA SEM REINJETAR (re-arm): repete o comando do Loader do passo 3
+  em qualquer altura (mesmo depois do cap). O log ganha "RLCAP1 rearm
+  cap=2000" e uma nova janela de 2000 frames começa. Útil se a primeira
+  janela apanhar menu/loading em vez de gameplay.
+
+  (Opcional, só para curiosidade: o probe continua disponível —
+     RenderLift.Loader.exe --pid <PID> --dll .\RenderLift.D3D11.dll ^
+       --call RenderLiftEntryProbe --param "C:\RenderLift-lab\RenderLift.probe"
+   mas já não é preciso: a fronteira está provada desde a v3.3.)
+
+  CAP PERSONALIZADO (não necessário para o teste oficial): a variável
+  RENDERLIFT_OBSERVE_FRAMES é lida do AMBIENTE DO PROCESSO DO JOGO —
+  define-a ANTES de lançar o GTA (p.ex. setx RENDERLIFT_OBSERVE_FRAMES
+  5000 + reiniciar, ou lança o GTA a partir de uma shell com ela definida).
+  Sem ela definem 2000. 0 = ilimitado (sem summary nem "cap" — não usar
+  no teste oficial).
+
+══════════════════════════════ COMO LER O RESULTADO ─
+  Abre C:\RenderLift-lab\RenderLift.D3D11.log (espelho em %TEMP%).
+
+  [A] Armed com 14 hooks:
+      "RLCAP1 armed hooks=14 mode=observe"    ← senão copia as linhas cp= e
+      qualquer "RLCAP1 fail ..." e manda.
+  [B] Primeiros disparos (procuram-se UMA vez por slot):
+      "RLCAP1 context first=0x..." / "context new=0x..."
+      "RLCAP1 first slot=DrawIndexedInstanced ctx=0x..."  ← o que aparecer
+  [C] A linha "RLCAP1 summary frames=2000 ...":
+      draws>0 e/ou diinst/dinst/om/vp>0  → Draw path = PROVEN + sabemos
+                                           EXATAMENTE por onde o jogo passa
+      tudo a 0, ctxs=0, com jogo FOCADO → o render NÃO usa estas funções
+      D3D11 (caminho contexto diferente / modo DX10) — abre-se a H2; manda
+      o log à mesma: o resultado negativo também é a resposta
+  [D] "Draw/DrawIndexed antigos" continuam a 0 enquanto diinst>0 →
+      confirma a hipótese H1 (cobertura) — era só coverage de slots.
+
+  Inspector offline (opcional):
+      RenderLift.CLI.exe inspect "C:\RenderLift-lab\RenderLift.D3D11.log"
+
+  MANDA-ME (tudo):
+    • a saída COMPLETA do Loader (passo 3 e, se usares, rearm)
+    • RenderLift.D3D11.log inteiro (da pasta-lab OU do %TEMP%)
+    • se algo falhar: RenderLift.entry + as linhas cp=/fail/seh
 
 ⚠️ REGRAS DE SEGURANÇA (invioláveis)
   • APENAS Modo História. NUNCA GTA Online (anti-cheat).
@@ -57,12 +105,15 @@
   • VC++ Redist 2015-2022 x64: https://aka.ms/vs/17/release/vc_redist.x64.exe
 
 ────────────────────────────────────────────── O QUE ESTÁ DENTRO ─
-  Build: Windows CI (MSVC) run 35837800340 · 0 erros · 67/67 testes.
+  Build: Windows CI (MSVC) run 35847348315 · commit 9504b2f · 0 erros ·
+  67/67 testes · RenderLift.Loader.exe código-fonte INALTERADO desde a v3.3
+  (congelado por decisão do projeto; binário republicado do mesmo source).
   Export contract 4/4 (evidência anexa RenderLift.D3D11.exports.txt):
-    [1] RenderLiftEntryProbe   RVA=0x00005ed0
-    [2] RenderLiftFrameCount   RVA=0x00005f60
-    [3] RenderLiftInstall      RVA=0x00005f80
-    [4] RenderLiftUninstall    RVA=0x00006190
-  Narrativa completa das 5 corridas + root cause:
-    docs/research/d3d11-research-layer.md §5.1
+    [1] RenderLiftEntryProbe   RVA=0x00007120
+    [2] RenderLiftFrameCount   RVA=0x000071b0
+    [3] RenderLiftInstall      RVA=0x000071d0
+    [4] RenderLiftUninstall    RVA=0x000073e0
+  (RVAs mudam entre builds — normal; o Loader resolve por NOME.)
+  Narrativa: docs/research/d3d11-research-layer.md §5.1 (runs 1–6) e §5.2
+  (desenho deste checkpoint + árvore de decisão H1/H2/H3).
 ═══════════════════════════════════════════════════════════════════════════
