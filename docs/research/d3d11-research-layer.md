@@ -272,7 +272,52 @@ a janela — H3 eliminada por protocolo):
 | TODOS os hooks de contexto a zero com jogo focado a renderizar | **H2** — o caminho de render não usa as funções ancoradas (deferred-domínio ou modo não-D3D11); `ctxs=0` no summary corrobora |
 | Present para durante a janela | contaminação de protocolo (jogo parou de apresentar) — repetir com foco garantido |
 
-**Resultado: PENDENTE do teste do utilizador (lab pack v3.4).**
+**RESULTADO (teste do utilizador, lab pack v3.4, GTA V Legacy, pid 43820,
+gameplay contínuo):** janela completa executada —
+`RLCAP1 summary frames=2000 d=0 di=0 diinst=0 dinst=0 dauto=0 diind=0
+dinstind=0 om=0 vp=0 draws=0 ctxs=0 ctxovf=0 verdict=DRAWPATH_ZERO`,
+terminador `cap frames=2000`, **zero** linhas `first slot=`, **zero**
+linhas `context first=/new=`. Present disparou os 2000/2000 frames
+(Checkpoints A/B PROVEN). Interpretação registada: **H1 enfraquecida, não
+refutada** (cobertura alargada a 7 famílias de draws e nada disparou); o
+que NÃO se pode concluir: "o GTA não faz draws" / "o probe está
+definitivamente errado" — a única coisa provada é que as funções ancoradas
+pelo probe não receberam essas chamadas na janela. Próxima questão:
+**qual é o Device/Context REAL do GTA e que endereços de método utiliza?**
+
+### 5.3 Checkpoint H2 — objeto real vs probe (v3.5, diagnóstico puro)
+
+Desenho (decisão do utilizador; ordem A das três arquiteturas de
+referência): no **primeiro Present** (o swapchain real provado), caminhar
+
+```
+REAL IDXGISwapChain → GetDevice(IID_ID3D11Device) → GetImmediateContext()
+→ GetType()/GetFeatureLevel() → vtables reais → endereços por slot
+```
+
+e comparar palavra a palavra com os valores resolvidos pelo probe:
+`RLCAP1 probe device=… ctxvt=…` (install), `RLCAP1 real swap=… device=…
+context=… ctxvt=… type=… fl=…` (1.º present), **15 linhas
+`RLCAP1 cmp name=… slot=… probe=0x… real=0x… SAME|DIFFERENT`** (inclui
+`Present` como controlo positivo embutido — esse hook dispara, logo a sua
+linha DEVE dizer SAME — e `ExecuteCommandList`(58) para a pista H3),
+veredicto agregado `RLCAP1 real verdict=PROBE_EQ_REAL | PROBE_NE_REAL
+diffs=N | NO_ID3D11DEVICE | SEH_FAIL`. A caminhada é protegida por SEH
+próprio (uma falha nossa nos diagnósticos nunca pode derrubar o thread de
+render do jogo; a falha vira evidência, não crash). **Zero hooks novos
+(14 → 14)**, wire-format e contadores intactos, `DRAWPATH_ZERO` não é
+mascarado. Foco passa a ser **variável medida**: `RLCAP1 focus state=…` +
+`focus transition=A->B frame=N` (foreground-window PID == pid do jogo) —
+nunca declarado como causa. Referências externas consideradas:
+gta5-extended-video-export (mesma cadeia swapchain→GetDevice→GetImmediate
+Context a partir do Present — ordem A); GTA5_FSR (wrapping na criação —
+ordem B, só se A não bastar); GameHook/gamehook_gtav (pipeline profundo —
+muito mais tarde). Leitura: PROBE_NE_REAL → H2 confirmada, próximo passo é
+hook mínimo (só Draw/DrawIndexed) nos endereços REAIS; PROBE_EQ_REAL com
+draws a zero → H2 perde força, H3 (deferred/command-list) sobe (observar
+ExecuteCommandList / criação de deferred contexts); NO_ID3D11DEVICE →
+modo não-D3D11 (DX10/DX10.1) — resposta direta ao DRAWPATH_ZERO.
+**Resultado: PENDENTE do teste do utilizador (lab pack v3.5).**
 
 ## 6. Roadmap da camada
 

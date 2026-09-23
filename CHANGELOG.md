@@ -135,6 +135,30 @@ The engine inside the product — **ALRR Core** — keeps its own version and is
   post-test decision tree; success criterion for this checkpoint is the
   empirical draw path, not `Install=0`/`Present observed`.
 
+### Added — 0.2 real-object discovery (v3.5, after v3.4 DRAWPATH_ZERO)
+- v3.4 live result recorded: 14 armed hooks, 2000/2000 Presents, **every
+  context counter at zero, zero contexts observed** during focused
+  gameplay — H1 (slot coverage) weakened; the open question is now whether
+  the probe-derived anchors are even the game's code (H2).
+- **Real-object walk on the first Present** (SEH-guarded, installs
+  nothing): real swapchain → `GetDevice(IID_ID3D11Device)` →
+  `GetImmediateContext()` → `GetType()`/feature-level → real vtables —
+  the same real chain used by gta5-extended-video-export; a
+  `NO_ID3D11DEVICE` verdict directly evidences a non-D3D11 game mode.
+- **PROBE × REAL word-for-word compare**: `RLCAP1 probe …` at install,
+  `RLCAP1 real …` on the first Present, 15 `RLCAP1 cmp name=… slot=…
+  probe=… real=… SAME|DIFFERENT` rows (incl. `Present` as a built-in
+  positive control and `ExecuteCommandList`(58) as the deferred/command-
+  list lead) and an aggregate `RLCAP1 real verdict=…` line.
+- **Focus as a measured experimental variable** (never an assumed cause):
+  `RLCAP1 focus state=…` + `focus transition=A->B frame=N` from
+  foreground-window PID comparison.
+- Hook count unchanged (14 → 14): zero new interceptions; wire format,
+  counters, first-fire/context lines, window summary and re-arm untouched;
+  loader still frozen.
+- Research doc: §5.2 closes with the v3.4 result; §5.3 records the H2
+  checkpoint design and decision tree (result pending).
+
 ### Added — 0.2 groundwork (hook engine + D3D11 module)
 - **MinHook 1.3.4 vendored** (`third_party/minhook`, BSD-2) — the D3D backend
   hook engine; notices updated.

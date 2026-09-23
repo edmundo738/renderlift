@@ -24,6 +24,15 @@
 // The legacy `drawstat frame=N calls= maxidx= maxvtx=` and `cap frames=`
 // lines are untouched (wire format and consumers preserved).
 //
+// v3.5 real-object discovery (v3.4 result: 14 armed hooks, 2000 Presents,
+// zero context calls — are our probe-derived anchors even the game's code?):
+//   one-time, SEH-guarded walk real swapchain → GetDevice(IID_ID3D11Device)
+//   → GetImmediateContext → GetType/feature-level → real vtables; then a
+//   word-for-word PROBE × REAL address compare (`RLCAP1 probe/real/cmp …`
+//   lines, verdict PROBE_EQ_REAL | PROBE_NE_REAL | NO_ID3D11DEVICE |
+//   SEH_FAIL). Installs NOTHING; hook count stays 14. Focus is logged as a
+//   measured variable (foreground-window PID), never as an assumed cause.
+//
 // Output: "RenderLift.D3D11.log" (RLCAP1 lines, next to this DLL by default)
 //   — inspect offline with:
 //   RenderLift.CLI inspect RenderLift.D3D11.log
@@ -97,6 +106,8 @@ constexpr std::size_t DrawAuto = 38;
 constexpr std::size_t DrawIndexedInstancedIndirect = 39;
 constexpr std::size_t DrawInstancedIndirect = 40;
 constexpr std::size_t RSSetViewports = 44;
+// Context execution surfaces — v3.5 diagnostics only (address compare, NO hooks)
+constexpr std::size_t ExecuteCommandList = 58;
 }  // namespace slot
 
 using PresentFn = HRESULT(STDMETHODCALLTYPE*)(IDXGISwapChain*, UINT, UINT);
@@ -483,6 +494,13 @@ struct ModuleState {
     std::uint64_t seenCtxs[kMaxTrackedContexts]{};
     std::uint32_t seenCtxCount = 0;     // distinct contexts observed this window
     std::uint32_t seenCtxOverflow = 0;  // distinct contexts beyond tracking capacity
+
+    // v3.5 real-object discovery (one-time per module load; NOT re-armed —
+    // object identities/method addresses do not change between windows):
+    Vtables probe;            // snapshot of everything resolveVtables captured
+    bool realDone = false;    // real swapchain→device→context dump happened
+    bool focusInit = false;   // initial focus state line written
+    bool lastFocused = false; // last known foreground state of this process
 };
 
 // The state block is constructed EXPLICITLY during install (checkpoint 2),
@@ -521,6 +539,13 @@ struct Vtables {
     void* drawInstancedIndirect = nullptr;
     void* omSetRenderTargets = nullptr;
     void* rsSetViewports = nullptr;
+    // v3.5: probe-object identity (for PROBE × REAL comparison; addresses
+    // stay valid as log evidence even after the probe objects are released)
+    void* executeCommandList = nullptr;  // probe ctx slot 58 (diagnostic only)
+    void* probeDevice = nullptr;
+    void* probeDevVtable = nullptr;
+    void* probeCtx = nullptr;
+    void* probeCtxVtable = nullptr;
 };
 
 bool tryCreateProbe(D3D_DRIVER_TYPE driverType, HWND hwnd, IDXGISwapChain** swapchainOut,
@@ -591,6 +616,11 @@ bool resolveVtables(Vtables& out) {
         out.drawInstancedIndirect = ctx.functionAt(slot::DrawInstancedIndirect);
         out.omSetRenderTargets = ctx.functionAt(slot::OMSetRenderTargets);
         out.rsSetViewports = ctx.functionAt(slot::RSSetViewports);
+        out.executeCommandList = ctx.functionAt(slot::ExecuteCommandList);
+        out.probeDevice = device;
+        out.probeDevVtable = *reinterpret_cast<void* const*>(device);
+        out.probeCtx = context;
+        out.probeCtxVtable = *reinterpret_cast<void* const*>(context);
         ok = out.present && out.resizeBuffers && out.createTexture2D && out.createRtv &&
              out.omSetRenderTargets && out.rsSetViewports;
         earlyLogf("RLCAP1 vtables present=%p draw=%p diinst=%p dauto=%p om=%p ok=%d",
@@ -857,6 +887,206 @@ HRESULT STDMETHODCALLTYPE CreateDsv_Hook(ID3D11Device* dev, ID3D11Resource* pRes
     return hr;
 }
 
+// ── v3.5 real-object discovery (H2 investigation — diagnostics, NO hooks) ───
+//
+// PROBLEM the v3.4 run posed: 14 probe-anchored hooks armed, Present fired
+// 2000 times, yet every context counter stayed at zero with zero contexts
+// observed. Two competing explanations: (H2) the method addresses our probe
+// vtable yielded are NOT the functions the game's real device/context use;
+// (H3) the game submits through deferred contexts / command lists so the
+// hooked immediate-context functions never run. This block answers H2 with
+// raw addresses and nothing else: on the game's real swapchain (the pointer
+// arriving at our Present hook — PROVEN real), walk
+//   swapchain → GetDevice(IID_ID3D11Device) → GetImmediateContext →
+//   GetType/feature-level → real vtables → slot addresses,
+// then compare each address with the probe-derived value word for word.
+// Reference pattern (external): gta5-extended-video-export walks the same
+// real swapchain → GetDevice → GetImmediateContext chain from its Present.
+
+// All-POD result bag (trivially copyable: legal inside an SEH frame).
+struct RealProbeResult {
+    HRESULT deviceHr = E_FAIL;   // GetDevice(IID_ID3D11Device) result
+    const void* dxgiDevice = nullptr;  // IID_IDXGIDevice fallback identity
+    const void* device = nullptr;
+    const void* devVtable = nullptr;
+    unsigned long featureLevel = 0;
+    const void* context = nullptr;
+    const void* ctxVtable = nullptr;
+    unsigned long ctxType = 0xFFFFFFFFul;  // D3D11_DEVICE_CONTEXT_TYPE
+    // Real slot addresses (nullptr when not reachable):
+    const void* scPresent = nullptr;
+    const void* scResize = nullptr;
+    const void* devTex2D = nullptr;
+    const void* devRtv = nullptr;
+    const void* devDsv = nullptr;
+    const void* ctxDrawIndexed = nullptr;
+    const void* ctxDraw = nullptr;
+    const void* ctxDrawIndexedInstanced = nullptr;
+    const void* ctxDrawInstanced = nullptr;
+    const void* ctxDrawAuto = nullptr;
+    const void* ctxDrawIndexedInstancedIndirect = nullptr;
+    const void* ctxDrawInstancedIndirect = nullptr;
+    const void* ctxOMSetRenderTargets = nullptr;
+    const void* ctxRSSetViewports = nullptr;
+    const void* ctxExecuteCommandList = nullptr;
+    bool sehHit = false;
+};
+
+// SEH filter on the k32 transport (same discipline as sehFilter): a fault in
+// OUR diag calls must never be able to crash the game's render thread. The
+// exception is recorded with code + address and the discovery reports
+// verdict=SEH_FAIL — nothing is masked: the failure itself becomes evidence.
+LONG realDiscoverSeh(EXCEPTION_POINTERS* ep) {
+    const DWORD code =
+        (ep != nullptr && ep->ExceptionRecord != nullptr) ? ep->ExceptionRecord->ExceptionCode : 0;
+    const void* addr = (ep != nullptr && ep->ExceptionRecord != nullptr)
+                           ? ep->ExceptionRecord->ExceptionAddress
+                           : nullptr;
+    earlyLogf("RLCAP1 discover seh code=0x%08lx addr=%p", static_cast<unsigned long>(code),
+              addr);
+    return EXCEPTION_EXECUTE_HANDLER;
+}
+
+RealProbeResult runRealDiscovery(IDXGISwapChain* swapchain) {
+    RealProbeResult r;
+    __try {
+        ID3D11Device* dev = nullptr;
+        r.deviceHr =
+            swapchain->GetDevice(__uuidof(ID3D11Device), reinterpret_cast<void**>(&dev));
+        if (FAILED(r.deviceHr) || dev == nullptr) {
+            // No ID3D11Device behind the real swapchain — itself decisive
+            // (p.ex. DX10/DX10.1 game mode). Still identify the DXGI device.
+            IDXGIDevice* dxgi = nullptr;
+            if (SUCCEEDED(swapchain->GetDevice(__uuidof(IDXGIDevice),
+                                               reinterpret_cast<void**>(&dxgi))) &&
+                dxgi != nullptr) {
+                r.dxgiDevice = dxgi;
+                dxgi->Release();
+            }
+            return r;
+        }
+        r.device = dev;
+        r.featureLevel = static_cast<unsigned long>(dev->GetFeatureLevel());
+        void* const* devVt = *reinterpret_cast<void* const**>(dev);
+        r.devVtable = devVt;
+        r.devTex2D = devVt[slot::CreateTexture2D];
+        r.devRtv = devVt[slot::CreateRenderTargetView];
+        r.devDsv = devVt[slot::CreateDepthStencilView];
+
+        void* const* scVt = *reinterpret_cast<void* const**>(swapchain);
+        r.scPresent = scVt[slot::Present];
+        r.scResize = scVt[slot::ResizeBuffers];
+
+        ID3D11DeviceContext* ctx = nullptr;
+        dev->GetImmediateContext(&ctx);  // always populated for a real device
+        if (ctx != nullptr) {
+            r.context = ctx;
+            r.ctxType = static_cast<unsigned long>(ctx->GetType());
+            void* const* ctxVt = *reinterpret_cast<void* const**>(ctx);
+            r.ctxVtable = ctxVt;
+            r.ctxDrawIndexed = ctxVt[slot::DrawIndexed];
+            r.ctxDraw = ctxVt[slot::Draw];
+            r.ctxDrawIndexedInstanced = ctxVt[slot::DrawIndexedInstanced];
+            r.ctxDrawInstanced = ctxVt[slot::DrawInstanced];
+            r.ctxDrawAuto = ctxVt[slot::DrawAuto];
+            r.ctxDrawIndexedInstancedIndirect = ctxVt[slot::DrawIndexedInstancedIndirect];
+            r.ctxDrawInstancedIndirect = ctxVt[slot::DrawInstancedIndirect];
+            r.ctxOMSetRenderTargets = ctxVt[slot::OMSetRenderTargets];
+            r.ctxRSSetViewports = ctxVt[slot::RSSetViewports];
+            r.ctxExecuteCommandList = ctxVt[slot::ExecuteCommandList];
+            ctx->Release();
+        }
+        dev->Release();
+    } __except (realDiscoverSeh(GetExceptionInformation())) {
+        r.sehHit = true;
+        r.deviceHr = E_UNEXPECTED;
+    }
+    return r;
+}
+
+bool cmpRow(ModuleState& s, const char* name, std::size_t slotIdx, const void* probeFn,
+            const void* realFn) {
+    const bool same =
+        (probeFn != nullptr) && (probeFn == realFn);
+    char line[224];
+    std::snprintf(line, sizeof line, "RLCAP1 cmp name=%s slot=%zu probe=0x%llx real=0x%llx %s",
+                  name, slotIdx,
+                  static_cast<unsigned long long>(
+                      reinterpret_cast<std::uintptr_t>(probeFn)),
+                  static_cast<unsigned long long>(
+                      reinterpret_cast<std::uintptr_t>(realFn)),
+                  same ? "SAME" : "DIFFERENT");
+    s.log.writeRaw(line);
+    return same;
+}
+
+// Formats the whole discovery report (caller holds s.mutex). ~19 lines once.
+void logRealDiscovery(ModuleState& s, IDXGISwapChain* swapchain, const RealProbeResult& r) {
+    char line[288];
+    if (r.sehHit) {
+        s.log.writeRaw("RLCAP1 real verdict=SEH_FAIL (see 'RLCAP1 discover seh' above)");
+        return;
+    }
+    if (r.device == nullptr) {
+        std::snprintf(line, sizeof line,
+                      "RLCAP1 real swap=0x%llx hr=0x%08lx dxgi_device=0x%llx",
+                      static_cast<unsigned long long>(
+                          reinterpret_cast<std::uintptr_t>(swapchain)),
+                      static_cast<unsigned long>(r.deviceHr),
+                      static_cast<unsigned long long>(
+                          reinterpret_cast<std::uintptr_t>(r.dxgiDevice)));
+        s.log.writeRaw(line);
+        s.log.writeRaw(
+            "RLCAP1 real verdict=NO_ID3D11DEVICE (real swapchain has no D3D11 device —"
+            " H2 non-D3D11 rendering mode, p.ex. DX10/DX10.1)");
+        return;
+    }
+    std::snprintf(line, sizeof line,
+                  "RLCAP1 real swap=0x%llx device=0x%llx devvt=0x%llx context=0x%llx"
+                  " ctxvt=0x%llx type=%s(%lu) fl=0x%lx",
+                  static_cast<unsigned long long>(
+                      reinterpret_cast<std::uintptr_t>(swapchain)),
+                  static_cast<unsigned long long>(
+                      reinterpret_cast<std::uintptr_t>(r.device)),
+                  static_cast<unsigned long long>(
+                      reinterpret_cast<std::uintptr_t>(r.devVtable)),
+                  static_cast<unsigned long long>(
+                      reinterpret_cast<std::uintptr_t>(r.context)),
+                  static_cast<unsigned long long>(
+                      reinterpret_cast<std::uintptr_t>(r.ctxVtable)),
+                  r.ctxType == 0 ? "IMMEDIATE" : (r.ctxType == 1 ? "DEFERRED" : "?TYPE"),
+                  r.ctxType, r.featureLevel);
+    s.log.writeRaw(line);
+
+    const Vtables& p = s.probe;
+    std::uint32_t rows = 0;
+    std::uint32_t diffs = 0;
+    const bool noCtx = (r.context == nullptr);
+    rows += 1; diffs += cmpRow(s, "Present", slot::Present, p.present, r.scPresent) ? 0u : 1u;
+    rows += 1; diffs += cmpRow(s, "ResizeBuffers", slot::ResizeBuffers, p.resizeBuffers, r.scResize) ? 0u : 1u;
+    rows += 1; diffs += cmpRow(s, "CreateTexture2D", slot::CreateTexture2D, p.createTexture2D, r.devTex2D) ? 0u : 1u;
+    rows += 1; diffs += cmpRow(s, "CreateRenderTargetView", slot::CreateRenderTargetView, p.createRtv, r.devRtv) ? 0u : 1u;
+    rows += 1; diffs += cmpRow(s, "CreateDepthStencilView", slot::CreateDepthStencilView, p.createDsv, r.devDsv) ? 0u : 1u;
+    if (!noCtx) {
+        rows += 1; diffs += cmpRow(s, "DrawIndexed", slot::DrawIndexed, p.drawIndexed, r.ctxDrawIndexed) ? 0u : 1u;
+        rows += 1; diffs += cmpRow(s, "Draw", slot::Draw, p.draw, r.ctxDraw) ? 0u : 1u;
+        rows += 1; diffs += cmpRow(s, "DrawIndexedInstanced", slot::DrawIndexedInstanced, p.drawIndexedInstanced, r.ctxDrawIndexedInstanced) ? 0u : 1u;
+        rows += 1; diffs += cmpRow(s, "DrawInstanced", slot::DrawInstanced, p.drawInstanced, r.ctxDrawInstanced) ? 0u : 1u;
+        rows += 1; diffs += cmpRow(s, "DrawAuto", slot::DrawAuto, p.drawAuto, r.ctxDrawAuto) ? 0u : 1u;
+        rows += 1; diffs += cmpRow(s, "DrawIndexedInstancedIndirect", slot::DrawIndexedInstancedIndirect, p.drawIndexedInstancedIndirect, r.ctxDrawIndexedInstancedIndirect) ? 0u : 1u;
+        rows += 1; diffs += cmpRow(s, "DrawInstancedIndirect", slot::DrawInstancedIndirect, p.drawInstancedIndirect, r.ctxDrawInstancedIndirect) ? 0u : 1u;
+        rows += 1; diffs += cmpRow(s, "OMSetRenderTargets", slot::OMSetRenderTargets, p.omSetRenderTargets, r.ctxOMSetRenderTargets) ? 0u : 1u;
+        rows += 1; diffs += cmpRow(s, "RSSetViewports", slot::RSSetViewports, p.rsSetViewports, r.ctxRSSetViewports) ? 0u : 1u;
+        rows += 1; diffs += cmpRow(s, "ExecuteCommandList", slot::ExecuteCommandList, p.executeCommandList, r.ctxExecuteCommandList) ? 0u : 1u;
+    } else {
+        s.log.writeRaw("RLCAP1 real context=nullptr (GetImmediateContext empty)");
+    }
+    std::snprintf(line, sizeof line, "RLCAP1 real verdict=%s rows=%u diffs=%u",
+                  diffs == 0 ? "PROBE_EQ_REAL" : "PROBE_NE_REAL",
+                  static_cast<unsigned>(rows), static_cast<unsigned>(diffs));
+    s.log.writeRaw(line);
+}
+
 HRESULT STDMETHODCALLTYPE Present_Hook(IDXGISwapChain* swapchain, UINT syncInterval,
                                        UINT flags) {
     ModuleState& s = state();
@@ -865,7 +1095,42 @@ HRESULT STDMETHODCALLTYPE Present_Hook(IDXGISwapChain* swapchain, UINT syncInter
         ++s.frame;
         ++s.presentCount;
 
+        // v3.5 one-time: who REALLY renders — walk the game's own objects.
+        // Guarded (own SEH); compare-by-address only; installs nothing.
+        if (!s.realDone) {
+            s.realDone = true;
+            const RealProbeResult r = runRealDiscovery(swapchain);
+            logRealDiscovery(s, swapchain, r);
+        }
+
         if (s.observing) {
+            // Focus as a MEASURED experimental variable (never an assumed
+            // cause): foreground-window PID == our PID, transitions logged.
+            {
+                const HWND fg = GetForegroundWindow();
+                DWORD fgPid = 0;
+                if (fg != nullptr) GetWindowThreadProcessId(fg, &fgPid);
+                const bool focused =
+                    (fg != nullptr) && (fgPid == GetCurrentProcessId());
+                if (!s.focusInit) {
+                    s.focusInit = true;
+                    s.lastFocused = focused;
+                    char line[96];
+                    std::snprintf(line, sizeof line, "RLCAP1 focus state=%s frame=%llu",
+                                  focused ? "FOCUSED" : "UNFOCUSED",
+                                  static_cast<unsigned long long>(s.frame));
+                    s.log.writeRaw(line);
+                } else if (focused != s.lastFocused) {
+                    char line[128];
+                    std::snprintf(line, sizeof line, "RLCAP1 focus transition=%s->%s frame=%llu",
+                                  s.lastFocused ? "FOCUSED" : "UNFOCUSED",
+                                  focused ? "FOCUSED" : "UNFOCUSED",
+                                  static_cast<unsigned long long>(s.frame));
+                    s.lastFocused = focused;
+                    s.log.writeRaw(line);
+                }
+            }
+
             // Per-frame aggregate first, then the frame marker — legacy
             // `drawstat` wire line preserved verbatim (v3.4: MUST NOT change).
             obs::DrawStatEvent stat{};
@@ -1058,6 +1323,21 @@ HRESULT installSteps() {
     if (!resolveVtables(vt)) {
         earlyLogRaw("RLCAP1 fail vtables");
         return RL_E_VTABLES;
+    }
+    s.probe = vt;  // v3.5: keep the probe identity for the PROBE×REAL compare
+    {
+        char pl[288];
+        std::snprintf(pl, sizeof pl,
+                      "RLCAP1 probe device=0x%llx devvt=0x%llx context=0x%llx ctxvt=0x%llx",
+                      static_cast<unsigned long long>(
+                          reinterpret_cast<std::uintptr_t>(vt.probeDevice)),
+                      static_cast<unsigned long long>(
+                          reinterpret_cast<std::uintptr_t>(vt.probeDevVtable)),
+                      static_cast<unsigned long long>(
+                          reinterpret_cast<std::uintptr_t>(vt.probeCtx)),
+                      static_cast<unsigned long long>(
+                          reinterpret_cast<std::uintptr_t>(vt.probeCtxVtable)));
+        s.log.writeRaw(pl);
     }
 
     struct Install {
