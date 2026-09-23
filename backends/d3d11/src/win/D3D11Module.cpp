@@ -6,7 +6,7 @@
 // it records what the game does into an RLCAP1 capture log and returns
 // control to the original function untouched.
 //
-// Observed surface (v3.4 — 14 hooks, still measured passthrough only):
+// Observed surface (v3.6 — 16 hooks, still measured passthrough only):
 //   ID3D11Device:        CreateTexture2D(5) · CreateRenderTargetView(9)
 //                        CreateDepthStencilView(10)
 //   ID3D11DeviceContext: DrawIndexed(12) · Draw(13) · DrawIndexedInstanced(20)
@@ -14,6 +14,9 @@
 //                        DrawAuto(38) · DrawIndexedInstancedIndirect(39)
 //                        DrawInstancedIndirect(40) · RSSetViewports(44)
 //   IDXGISwapChain:      Present(8) · ResizeBuffers(13)
+//   REAL-path (v3.6, read dynamically from the game's real ctx vtable at
+//   first Present — never hardcoded): Draw(13) · DrawIndexed(12) — 2 hooks,
+//   own rd=/rdi= counters + `first REAL slot=`/`realhook target=` lines.
 //
 // v3.4 draw-path evidence (OBSERVE-only — zero visual/rendering change):
 //   per-frame `RLCAP1 draws …` per-slot counters, first-fire lines
@@ -30,8 +33,32 @@
 //   → GetImmediateContext → GetType/feature-level → real vtables; then a
 //   word-for-word PROBE × REAL address compare (`RLCAP1 probe/real/cmp …`
 //   lines, verdict PROBE_EQ_REAL | PROBE_NE_REAL | NO_ID3D11DEVICE |
-//   SEH_FAIL). Installs NOTHING; hook count stays 14. Focus is logged as a
-//   measured variable (foreground-window PID), never as an assumed cause.
+//   SEH_FAIL). Installs NOTHING at this stage. Focus is logged as a measured
+//   variable, never as an assumed cause.
+//
+// v3.5 RESULT (GTA V Legacy 1.0.3889.0, sealed): verdict=PROBE_NE_REAL,
+// diffs=8/15 — the game's real immediate context is a RAGE heap-resident
+// class whose Draw(13)/DrawIndexed(12) (+ the 5 other draw-family slots)
+// point at DIFFERENT code than our probe vtable, while OMSetRenderTargets/
+// RSSetViewports/ExecuteCommandList match. PROVEN: the difference exists.
+// NOT proven: that it CAUSES DRAWPATH_ZERO — Present is the standing
+// counter-example (its REAL entry also differs from the probe's, yet the
+// probe hook captured 2000/2000 frames — whoever calls Present resolves the
+// entry on the REAL instance, and the game's documented call pattern makes
+// DIFFERENT non-decisive in general).
+//
+// v3.6 real-draw-path microtest (16 hooks total = 14 PROBE + 2 REAL):
+//   from the first-Present discovery, read the REAL context vtable slots
+//   12 (DrawIndexed) and 13 (Draw) DYNAMICALLY — never hardcode addresses —
+//   and install exactly 2 new hooks through the existing IHookEngine
+//   (create ×2 + enableAll). Probe and real paths stay strictly separated:
+//   own counters (realDraw/realDrawIndexed → rd=/rdi=), own first-fire
+//   lines (`RLCAP1 first REAL slot=…`), own install lines
+//   (`RLCAP1 realhook target=…`). Plus: module-owner attribution of the 4
+//   draw addresses (GetModuleHandleEx FROM_ADDRESS|UNCHANGED_REFCOUNT —
+//   cheap, safe, off hot path) and focus telemetry v2 (W: foreground HWND
+//   == swapchain OutputWindow from GetDesc; P: foreground PID == our PID —
+//   measurement only, never a gate).
 //
 // Output: "RenderLift.D3D11.log" (RLCAP1 lines, next to this DLL by default)
 //   — inspect offline with:
@@ -465,6 +492,10 @@ struct SlotCounters {
     std::uint64_t drawInstancedIndirect = 0;      // DrawInstancedIndirect(40)
     std::uint64_t omSetRenderTargets = 0;         // OMSetRenderTargets(33)
     std::uint64_t rsSetViewports = 0;             // RSSetViewports(44)
+    // v3.6: REAL-address hooks (installed on the game's own context vtable
+    // entries — PROBE path left untouched, never mixed):
+    std::uint64_t realDraw = 0;                   // REAL Draw(13)
+    std::uint64_t realDrawIndexed = 0;            // REAL DrawIndexed(12)
 
     void add(const SlotCounters& o) {
         draw += o.draw;
@@ -476,12 +507,16 @@ struct SlotCounters {
         drawInstancedIndirect += o.drawInstancedIndirect;
         omSetRenderTargets += o.omSetRenderTargets;
         rsSetViewports += o.rsSetViewports;
+        realDraw += o.realDraw;
+        realDrawIndexed += o.realDrawIndexed;
     }
 
     std::uint64_t drawsTotal() const {
         return draw + drawIndexed + drawIndexedInstanced + drawInstanced + drawAuto +
                drawIndexedInstancedIndirect + drawInstancedIndirect;
     }
+
+    std::uint64_t realDrawsTotal() const { return realDraw + realDrawIndexed; }
 };
 
 // Distinct contexts tracked per window (enough for immediate + deferred sets).
@@ -506,6 +541,10 @@ struct ModuleState {
     DrawInstancedIndirectFn originalDrawInstancedIndirect = nullptr;
     OMSetRenderTargetsFn originalOMSetRenderTargets = nullptr;
     RSSetViewportsFn originalRSSetViewports = nullptr;
+    // v3.6: trampolines for the 2 REAL-address hooks (filled at first
+    // Present; completely separate from the PROBE originals above):
+    DrawIndexedFn originalRealDrawIndexed = nullptr;
+    DrawFn originalRealDraw = nullptr;
 
     bool installed = false;
     std::atomic<bool> observing{false};  // read on the hot path without the mutex
@@ -526,8 +565,12 @@ struct ModuleState {
     // object identities/method addresses do not change between windows):
     Vtables probe;            // snapshot of everything resolveVtables captured
     bool realDone = false;    // real swapchain→device→context dump happened
-    bool focusInit = false;   // initial focus state line written
-    bool lastFocused = false; // last known foreground state of this process
+    // v3.6:
+    bool realHooksInstalled = false;  // the 2 REAL hooks armed (one-time)
+    HWND scOutHwnd = nullptr;         // real swapchain OutputWindow (GetDesc)
+    bool focusInit = false;  // initial focus state line written
+    bool focusW = false;     // W: last fg HWND == scOutHwnd
+    bool focusP = false;     // P: last fg PID == our PID
 };
 
 // The state block is constructed EXPLICITLY during install (checkpoint 2),
@@ -656,13 +699,19 @@ enum FirstSlotBit : std::uint32_t {
     kFirstBit_DrawInstancedIndirect = 1u << 6,
     kFirstBit_OMSetRenderTargets = 1u << 7,
     kFirstBit_RSSetViewports = 1u << 8,
+    kFirstBit_RealDraw = 1u << 9,
+    kFirstBit_RealDrawIndexed = 1u << 10,
 };
 
-void noteFirstSlot(ModuleState& s, std::uint32_t bit, const char* name, const void* ctx) {
+void noteFirstSlot(ModuleState& s, std::uint32_t bit, const char* name, const void* ctx,
+                   bool realTag) {
     if ((s.firstLoggedMask & bit) != 0) return;
     s.firstLoggedMask |= bit;
     char line[128];
-    std::snprintf(line, sizeof line, "RLCAP1 first slot=%s ctx=0x%llx", name,
+    std::snprintf(line, sizeof line,
+                  realTag ? "RLCAP1 first REAL slot=%s ctx=0x%llx"
+                          : "RLCAP1 first slot=%s ctx=0x%llx",
+                  name,
                   static_cast<unsigned long long>(
                       reinterpret_cast<std::uintptr_t>(ctx)));
     s.log.writeRaw(line);
@@ -704,7 +753,7 @@ void STDMETHODCALLTYPE DrawIndexed_Hook(ID3D11DeviceContext* ctx, UINT indexCoun
         if (indexCount > s.draw.maxIndices) s.draw.maxIndices = indexCount;
         ++s.frameSlots.drawIndexed;
         noteContext(s, ctx);
-        noteFirstSlot(s, kFirstBit_DrawIndexed, "DrawIndexed", ctx);
+        noteFirstSlot(s, kFirstBit_DrawIndexed, "DrawIndexed", ctx, /*realTag=*/false);
     }
     s.originalDrawIndexed(ctx, indexCount, startIndexLocation, baseVertexLocation);
 }
@@ -718,7 +767,7 @@ void STDMETHODCALLTYPE Draw_Hook(ID3D11DeviceContext* ctx, UINT vertexCount,
         if (vertexCount > s.draw.maxVertices) s.draw.maxVertices = vertexCount;
         ++s.frameSlots.draw;
         noteContext(s, ctx);
-        noteFirstSlot(s, kFirstBit_Draw, "Draw", ctx);
+        noteFirstSlot(s, kFirstBit_Draw, "Draw", ctx, /*realTag=*/false);
     }
     s.originalDraw(ctx, vertexCount, startVertexLocation);
 }
@@ -734,7 +783,7 @@ void STDMETHODCALLTYPE DrawIndexedInstanced_Hook(ID3D11DeviceContext* ctx,
         std::lock_guard<std::mutex> lock(s.mutex);
         ++s.frameSlots.drawIndexedInstanced;
         noteContext(s, ctx);
-        noteFirstSlot(s, kFirstBit_DrawIndexedInstanced, "DrawIndexedInstanced", ctx);
+        noteFirstSlot(s, kFirstBit_DrawIndexedInstanced, "DrawIndexedInstanced", ctx, /*realTag=*/false);
     }
     s.originalDrawIndexedInstanced(ctx, indexCountPerInstance, instanceCount,
                                    startIndexLocation, baseVertexLocation,
@@ -750,7 +799,7 @@ void STDMETHODCALLTYPE DrawInstanced_Hook(ID3D11DeviceContext* ctx,
         std::lock_guard<std::mutex> lock(s.mutex);
         ++s.frameSlots.drawInstanced;
         noteContext(s, ctx);
-        noteFirstSlot(s, kFirstBit_DrawInstanced, "DrawInstanced", ctx);
+        noteFirstSlot(s, kFirstBit_DrawInstanced, "DrawInstanced", ctx, /*realTag=*/false);
     }
     s.originalDrawInstanced(ctx, vertexCountPerInstance, instanceCount,
                             startVertexLocation, startInstanceLocation);
@@ -762,7 +811,7 @@ void STDMETHODCALLTYPE DrawAuto_Hook(ID3D11DeviceContext* ctx) {
         std::lock_guard<std::mutex> lock(s.mutex);
         ++s.frameSlots.drawAuto;
         noteContext(s, ctx);
-        noteFirstSlot(s, kFirstBit_DrawAuto, "DrawAuto", ctx);
+        noteFirstSlot(s, kFirstBit_DrawAuto, "DrawAuto", ctx, /*realTag=*/false);
     }
     s.originalDrawAuto(ctx);
 }
@@ -775,7 +824,7 @@ void STDMETHODCALLTYPE DrawIndexedInstancedIndirect_Hook(
         ++s.frameSlots.drawIndexedInstancedIndirect;
         noteContext(s, ctx);
         noteFirstSlot(s, kFirstBit_DrawIndexedInstancedIndirect,
-                      "DrawIndexedInstancedIndirect", ctx);
+                      "DrawIndexedInstancedIndirect", ctx, /*realTag=*/false);
     }
     s.originalDrawIndexedInstancedIndirect(ctx, pBufferForArgs, alignedByteOffsetForArgs);
 }
@@ -788,7 +837,7 @@ void STDMETHODCALLTYPE DrawInstancedIndirect_Hook(ID3D11DeviceContext* ctx,
         std::lock_guard<std::mutex> lock(s.mutex);
         ++s.frameSlots.drawInstancedIndirect;
         noteContext(s, ctx);
-        noteFirstSlot(s, kFirstBit_DrawInstancedIndirect, "DrawInstancedIndirect", ctx);
+        noteFirstSlot(s, kFirstBit_DrawInstancedIndirect, "DrawInstancedIndirect", ctx, /*realTag=*/false);
     }
     s.originalDrawInstancedIndirect(ctx, pBufferForArgs, alignedByteOffsetForArgs);
 }
@@ -801,7 +850,7 @@ void STDMETHODCALLTYPE OMSetRenderTargets_Hook(ID3D11DeviceContext* ctx, UINT nu
         std::lock_guard<std::mutex> lock(s.mutex);
         ++s.frameSlots.omSetRenderTargets;
         noteContext(s, ctx);
-        noteFirstSlot(s, kFirstBit_OMSetRenderTargets, "OMSetRenderTargets", ctx);
+        noteFirstSlot(s, kFirstBit_OMSetRenderTargets, "OMSetRenderTargets", ctx, /*realTag=*/false);
         obs::RenderTargetsEvent e{};
         e.context = reinterpret_cast<std::uint64_t>(ctx);
         e.count = (numViews > obs::kMaxRtvs) ? obs::kMaxRtvs : numViews;
@@ -821,7 +870,7 @@ void STDMETHODCALLTYPE RSSetViewports_Hook(ID3D11DeviceContext* ctx, UINT numVie
         std::lock_guard<std::mutex> lock(s.mutex);
         ++s.frameSlots.rsSetViewports;
         noteContext(s, ctx);
-        noteFirstSlot(s, kFirstBit_RSSetViewports, "RSSetViewports", ctx);
+        noteFirstSlot(s, kFirstBit_RSSetViewports, "RSSetViewports", ctx, /*realTag=*/false);
         if (pViewports != nullptr && numViewports > 0) {
             obs::ViewportEvent e{};
             e.context = reinterpret_cast<std::uint64_t>(ctx);
@@ -834,6 +883,36 @@ void STDMETHODCALLTYPE RSSetViewports_Hook(ID3D11DeviceContext* ctx, UINT numVie
         }
     }
     s.originalRSSetViewports(ctx, numViewports, pViewports);
+}
+
+// ── v3.6 REAL-path detours (microtest) ─────────────────────────────────────
+// Targets: the code the GAME'S OWN immediate-context vtable points at, slots
+// 12/13, read dynamically at first Present (v3.5 proved they differ from the
+// probe vtable's). Strictly separate evidence: real_* counters +
+// `first REAL slot=` lines — probe counters are never touched here.
+void STDMETHODCALLTYPE RealDrawIndexed_Hook(ID3D11DeviceContext* ctx, UINT indexCount,
+                                            UINT startIndexLocation,
+                                            INT baseVertexLocation) {
+    ModuleState& s = state();
+    if (observing()) {
+        std::lock_guard<std::mutex> lock(s.mutex);
+        ++s.frameSlots.realDrawIndexed;
+        noteContext(s, ctx);
+        noteFirstSlot(s, kFirstBit_RealDrawIndexed, "DrawIndexed", ctx, /*realTag=*/true);
+    }
+    s.originalRealDrawIndexed(ctx, indexCount, startIndexLocation, baseVertexLocation);
+}
+
+void STDMETHODCALLTYPE RealDraw_Hook(ID3D11DeviceContext* ctx, UINT vertexCount,
+                                     UINT startVertexLocation) {
+    ModuleState& s = state();
+    if (observing()) {
+        std::lock_guard<std::mutex> lock(s.mutex);
+        ++s.frameSlots.realDraw;
+        noteContext(s, ctx);
+        noteFirstSlot(s, kFirstBit_RealDraw, "Draw", ctx, /*realTag=*/true);
+    }
+    s.originalRealDraw(ctx, vertexCount, startVertexLocation);
 }
 
 HRESULT STDMETHODCALLTYPE CreateTexture2D_Hook(ID3D11Device* dev,
@@ -932,6 +1011,7 @@ struct RealProbeResult {
     const void* ctxOMSetRenderTargets = nullptr;
     const void* ctxRSSetViewports = nullptr;
     const void* ctxExecuteCommandList = nullptr;
+    HWND scOutHwnd = nullptr;  // v3.6: swapchain OutputWindow (GetDesc) — focus W metric
     bool sehHit = false;
 };
 
@@ -953,6 +1033,11 @@ LONG realDiscoverSeh(EXCEPTION_POINTERS* ep) {
 RealProbeResult runRealDiscovery(IDXGISwapChain* swapchain) {
     RealProbeResult r;
     __try {
+        // v3.6: capture the REAL output window for the focus W metric —
+        // GetDesc on the game's own swapchain, POD struct, SEH-guarded.
+        DXGI_SWAP_CHAIN_DESC scDesc{};
+        if (SUCCEEDED(swapchain->GetDesc(&scDesc))) r.scOutHwnd = scDesc.OutputWindow;
+
         ID3D11Device* dev = nullptr;
         r.deviceHr =
             swapchain->GetDevice(__uuidof(ID3D11Device), reinterpret_cast<void**>(&dev));
@@ -1023,9 +1108,33 @@ bool cmpRow(ModuleState& s, const char* name, std::size_t slotIdx, const void* p
     return same;
 }
 
-// Formats the whole discovery report (caller holds s.mutex). ~19 lines once.
+// v3.6: cheap/safe module attribution for a code address (approved route —
+// FROM_ADDRESS | UNCHANGED_REFCOUNT: lookup only, no refcount bump, no
+// module load; basename only). Runs once per discovery, never on hot paths.
+void moduleOf(const void* address, char* out, std::size_t outSize) {
+    HMODULE mod = nullptr;
+    out[0] = '\0';
+    if (address != nullptr &&
+        GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                               GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                           reinterpret_cast<LPCSTR>(address), &mod) &&
+        mod != nullptr) {
+        char path[MAX_PATH];
+        if (GetModuleFileNameA(mod, path, MAX_PATH) != 0) {
+            const char* base = path;
+            for (const char* p = path; *p != '\0'; ++p) {
+                if (*p == '\\' || *p == '/') base = p + 1;
+            }
+            std::snprintf(out, outSize, "%s", base);
+        }
+    }
+    if (out[0] == '\0') std::snprintf(out, outSize, "%s", "?nomodule");
+}
+
+// Formats the whole discovery report (caller holds s.mutex). ~24 lines once.
 void logRealDiscovery(ModuleState& s, IDXGISwapChain* swapchain, const RealProbeResult& r) {
     char line[288];
+    s.scOutHwnd = r.scOutHwnd;  // focus W metric baseline (nullptr on SEH)
     if (r.sehHit) {
         s.log.writeRaw("RLCAP1 real verdict=SEH_FAIL (see 'RLCAP1 discover seh' above)");
         return;
@@ -1088,6 +1197,85 @@ void logRealDiscovery(ModuleState& s, IDXGISwapChain* swapchain, const RealProbe
                   diffs == 0 ? "PROBE_EQ_REAL" : "PROBE_NE_REAL",
                   static_cast<unsigned>(rows), static_cast<unsigned>(diffs));
     s.log.writeRaw(line);
+
+    // v3.6 evidence addenda (same one-time block):
+    std::snprintf(line, sizeof line, "RLCAP1 scwnd out=0x%llx",
+                  static_cast<unsigned long long>(
+                      reinterpret_cast<std::uintptr_t>(r.scOutHwnd)));
+    s.log.writeRaw(line);
+    if (!noCtx) {
+        // Who owns the 4 differing draw addresses? (probe Draw/DrawIndexed
+        // vs real Draw/DrawIndexed). Cheap lookup, off hot path.
+        const struct OwnerRow {
+            const char* name;
+            const char* target;
+            const void* fn;
+        } owners[] = {
+            {"Draw", "PROBE", p.draw},
+            {"Draw", "REAL", r.ctxDraw},
+            {"DrawIndexed", "PROBE", p.drawIndexed},
+            {"DrawIndexed", "REAL", r.ctxDrawIndexed},
+        };
+        for (std::size_t i = 0; i < sizeof owners / sizeof owners[0]; ++i) {
+            char mod[96];
+            moduleOf(owners[i].fn, mod, sizeof mod);
+            std::snprintf(line, sizeof line,
+                          "RLCAP1 owner name=%s target=%s addr=0x%llx module=%s",
+                          owners[i].name, owners[i].target,
+                          static_cast<unsigned long long>(
+                              reinterpret_cast<std::uintptr_t>(owners[i].fn)),
+                          mod);
+            s.log.writeRaw(line);
+        }
+    }
+}
+
+// v3.6: install exactly 2 hooks on the REAL Draw/DrawIndexed entry points
+// (addresses come from runRealDiscovery — read from the game's real context
+// vtable at runtime, NEVER hardcoded). Uses the existing engine; enableAll()
+// is its only enable primitive — re-invoking it is idempotent for hooks that
+// are already enabled (MinHook skips enabled entries under MH_ALL_HOOKS), so
+// the 14 armed probe hooks are untouched. One-time (realHooksInstalled);
+// re-arm reopens the counting window without any reinstall.
+void installRealDrawHooks(ModuleState& s, const RealProbeResult& r) {
+    if (s.realHooksInstalled || s.hooks == nullptr) return;
+    if (r.sehHit || r.context == nullptr || r.ctxDraw == nullptr ||
+        r.ctxDrawIndexed == nullptr) {
+        s.log.writeRaw("RLCAP1 realhook skip=missing-real-addrs");
+        return;
+    }
+    const struct RealInstall {
+        const char* name;
+        const void* target;
+        void* detour;
+        void** original;
+    } installs[] = {
+        {"Draw", r.ctxDraw, reinterpret_cast<void*>(&RealDraw_Hook),
+         reinterpret_cast<void**>(&s.originalRealDraw)},
+        {"DrawIndexed", r.ctxDrawIndexed, reinterpret_cast<void*>(&RealDrawIndexed_Hook),
+         reinterpret_cast<void**>(&s.originalRealDrawIndexed)},
+    };
+    std::uint32_t ok = 0;
+    for (std::size_t i = 0; i < 2; ++i) {
+        const HookStatus st =
+            s.hooks->create(const_cast<void*>(installs[i].target), installs[i].detour,
+                            installs[i].original);
+        char line[160];
+        std::snprintf(line, sizeof line, "RLCAP1 realhook target=%s addr=0x%llx ok=%d",
+                      installs[i].name,
+                      static_cast<unsigned long long>(
+                          reinterpret_cast<std::uintptr_t>(installs[i].target)),
+                      succeeded(st) ? 1 : 0);
+        s.log.writeRaw(line);
+        if (succeeded(st)) ++ok;
+    }
+    if (ok == 2 && succeeded(s.hooks->enableAll())) {
+        s.realHooksInstalled = true;
+        s.log.writeRaw("RLCAP1 real verdict2=REALHOOKS_ARMED count=2 total=16");
+        return;
+    }
+    // Failure is evidence, never masked: the run degrades to v3.5 behavior.
+    s.log.writeRaw("RLCAP1 real verdict2=REALHOOKS_FAIL");
 }
 
 HRESULT STDMETHODCALLTYPE Present_Hook(IDXGISwapChain* swapchain, UINT syncInterval,
@@ -1099,37 +1287,60 @@ HRESULT STDMETHODCALLTYPE Present_Hook(IDXGISwapChain* swapchain, UINT syncInter
         ++s.presentCount;
 
         // v3.5 one-time: who REALLY renders — walk the game's own objects.
-        // Guarded (own SEH); compare-by-address only; installs nothing.
+        // v3.6: the same first-Present block now also arms the 2 REAL hooks.
         if (!s.realDone) {
             s.realDone = true;
             const RealProbeResult r = runRealDiscovery(swapchain);
             logRealDiscovery(s, swapchain, r);
+            installRealDrawHooks(s, r);
         }
 
         if (s.observing) {
-            // Focus as a MEASURED experimental variable (never an assumed
-            // cause): foreground-window PID == our PID, transitions logged.
+            // Focus as a MEASURED experimental variable v2 (measurement
+            // only — never a gate, never an assumed cause). Two distinct
+            // components, reported separately so PID-vs-HWND disagreements
+            // become visible instead of being conflated:
+            //   W = foreground HWND == real swapchain OutputWindow (GetDesc)
+            //   P = foreground PID == our process id (the v3.5 metric)
             {
                 const HWND fg = GetForegroundWindow();
                 DWORD fgPid = 0;
                 if (fg != nullptr) GetWindowThreadProcessId(fg, &fgPid);
-                const bool focused =
+                const bool focusW = (fg != nullptr) && (fg == s.scOutHwnd);
+                const bool focusP =
                     (fg != nullptr) && (fgPid == GetCurrentProcessId());
                 if (!s.focusInit) {
                     s.focusInit = true;
-                    s.lastFocused = focused;
-                    char line[96];
-                    std::snprintf(line, sizeof line, "RLCAP1 focus state=%s frame=%llu",
-                                  focused ? "FOCUSED" : "UNFOCUSED",
-                                  static_cast<unsigned long long>(s.frame));
+                    s.focusW = focusW;
+                    s.focusP = focusP;
+                    char line[224];
+                    std::snprintf(line, sizeof line,
+                                  "RLCAP1 focus init W=%d P=%d frame=%llu sc=0x%llx"
+                                  " fg=0x%llx fgpid=%lu pid=%lu",
+                                  focusW ? 1 : 0, focusP ? 1 : 0,
+                                  static_cast<unsigned long long>(s.frame),
+                                  static_cast<unsigned long long>(
+                                      reinterpret_cast<std::uintptr_t>(s.scOutHwnd)),
+                                  static_cast<unsigned long long>(
+                                      reinterpret_cast<std::uintptr_t>(fg)),
+                                  static_cast<unsigned long>(fgPid),
+                                  static_cast<unsigned long>(GetCurrentProcessId()));
                     s.log.writeRaw(line);
-                } else if (focused != s.lastFocused) {
-                    char line[128];
-                    std::snprintf(line, sizeof line, "RLCAP1 focus transition=%s->%s frame=%llu",
-                                  s.lastFocused ? "FOCUSED" : "UNFOCUSED",
-                                  focused ? "FOCUSED" : "UNFOCUSED",
-                                  static_cast<unsigned long long>(s.frame));
-                    s.lastFocused = focused;
+                } else if (focusW != s.focusW || focusP != s.focusP) {
+                    char line[224];
+                    std::snprintf(line, sizeof line,
+                                  "RLCAP1 focus transition W=%d->%d P=%d->%d frame=%llu"
+                                  " sc=0x%llx fg=0x%llx fgpid=%lu",
+                                  s.focusW ? 1 : 0, focusW ? 1 : 0,
+                                  s.focusP ? 1 : 0, focusP ? 1 : 0,
+                                  static_cast<unsigned long long>(s.frame),
+                                  static_cast<unsigned long long>(
+                                      reinterpret_cast<std::uintptr_t>(s.scOutHwnd)),
+                                  static_cast<unsigned long long>(
+                                      reinterpret_cast<std::uintptr_t>(fg)),
+                                  static_cast<unsigned long>(fgPid));
+                    s.focusW = focusW;
+                    s.focusP = focusP;
                     s.log.writeRaw(line);
                 }
             }
@@ -1146,9 +1357,12 @@ HRESULT STDMETHODCALLTYPE Present_Hook(IDXGISwapChain* swapchain, UINT syncInter
             // v3.4: per-slot coverage diagnostic (raw line; the RLCAP1 parser
             // tolerates unknown tags, offline inspector just skips it).
             char line[384];
+            // rd=/rdi= (v3.6) are the REAL-path counters — always separated
+            // from the probe-path d=/di= above; never summed into draws=.
             std::snprintf(line, sizeof line,
                           "RLCAP1 draws frame=%llu d=%llu di=%llu diinst=%llu dinst=%llu"
-                          " dauto=%llu diind=%llu dinstind=%llu om=%llu vp=%llu",
+                          " dauto=%llu diind=%llu dinstind=%llu om=%llu vp=%llu"
+                          " rd=%llu rdi=%llu",
                           static_cast<unsigned long long>(s.frame),
                           static_cast<unsigned long long>(s.frameSlots.draw),
                           static_cast<unsigned long long>(s.frameSlots.drawIndexed),
@@ -1158,7 +1372,9 @@ HRESULT STDMETHODCALLTYPE Present_Hook(IDXGISwapChain* swapchain, UINT syncInter
                           static_cast<unsigned long long>(s.frameSlots.drawIndexedInstancedIndirect),
                           static_cast<unsigned long long>(s.frameSlots.drawInstancedIndirect),
                           static_cast<unsigned long long>(s.frameSlots.omSetRenderTargets),
-                          static_cast<unsigned long long>(s.frameSlots.rsSetViewports));
+                          static_cast<unsigned long long>(s.frameSlots.rsSetViewports),
+                          static_cast<unsigned long long>(s.frameSlots.realDraw),
+                          static_cast<unsigned long long>(s.frameSlots.realDrawIndexed));
             s.log.writeRaw(line);
             s.windowSlots.add(s.frameSlots);
 
@@ -1172,11 +1388,12 @@ HRESULT STDMETHODCALLTYPE Present_Hook(IDXGISwapChain* swapchain, UINT syncInter
             if (s.observationCap > 0 && s.frame >= s.observationCap) {
                 // Window summary BEFORE the legacy terminator — answers "por
                 // onde o jogo passou" without reading 2000 per-frame lines.
-                char sum[512];
+                char sum[576];
                 std::snprintf(sum, sizeof sum,
                               "RLCAP1 summary frames=%llu d=%llu di=%llu diinst=%llu"
                               " dinst=%llu dauto=%llu diind=%llu dinstind=%llu om=%llu"
-                              " vp=%llu draws=%llu ctxs=%u ctxovf=%u verdict=%s",
+                              " vp=%llu rd=%llu rdi=%llu draws=%llu rdraws=%llu"
+                              " ctxs=%u ctxovf=%u verdict=%s rverdict=%s",
                               static_cast<unsigned long long>(s.frame),
                               static_cast<unsigned long long>(s.windowSlots.draw),
                               static_cast<unsigned long long>(s.windowSlots.drawIndexed),
@@ -1187,10 +1404,16 @@ HRESULT STDMETHODCALLTYPE Present_Hook(IDXGISwapChain* swapchain, UINT syncInter
                               static_cast<unsigned long long>(s.windowSlots.drawInstancedIndirect),
                               static_cast<unsigned long long>(s.windowSlots.omSetRenderTargets),
                               static_cast<unsigned long long>(s.windowSlots.rsSetViewports),
+                              static_cast<unsigned long long>(s.windowSlots.realDraw),
+                              static_cast<unsigned long long>(s.windowSlots.realDrawIndexed),
                               static_cast<unsigned long long>(s.windowSlots.drawsTotal()),
+                              static_cast<unsigned long long>(s.windowSlots.realDrawsTotal()),
                               s.seenCtxCount, s.seenCtxOverflow,
                               s.windowSlots.drawsTotal() > 0 ? "DRAWPATH_ACTIVE"
-                                                             : "DRAWPATH_ZERO");
+                                                             : "DRAWPATH_ZERO",
+                              !s.realHooksInstalled ? "REALHOOKS_ABSENT"
+                              : s.windowSlots.realDrawsTotal() > 0 ? "REALDRAW_ACTIVE"
+                                                                   : "REALDRAW_ZERO");
                 s.log.writeRaw(sum);
                 s.log.writeRaw("RLCAP1 cap frames=" + std::to_string(s.frame));
                 s.log.flush();
@@ -1268,6 +1491,9 @@ HRESULT uninstallLocked(ModuleState& s) {
     s.originalDrawInstancedIndirect = nullptr;
     s.originalOMSetRenderTargets = nullptr;
     s.originalRSSetViewports = nullptr;
+    s.originalRealDrawIndexed = nullptr;
+    s.originalRealDraw = nullptr;
+    s.realHooksInstalled = false;
     s.log.flush();
     s.installed = false;
     return S_OK;

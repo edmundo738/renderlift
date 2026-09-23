@@ -317,7 +317,64 @@ hook mínimo (só Draw/DrawIndexed) nos endereços REAIS; PROBE_EQ_REAL com
 draws a zero → H2 perde força, H3 (deferred/command-list) sobe (observar
 ExecuteCommandList / criação de deferred contexts); NO_ID3D11DEVICE →
 modo não-D3D11 (DX10/DX10.1) — resposta direta ao DRAWPATH_ZERO.
-**Resultado: PENDENTE do teste do utilizador (lab pack v3.5).**
+**Resultado (selado; GTA V Legacy 1.0.3889.0, pid 36752, janela inteira
+2000/2000): `verdict=PROBE_NE_REAL rows=15 diffs=8`.** O device real é o
+mesmo do probe (`devvt` IGUAL; CreateTexture2D/RTV/DSV SAME), mas o
+**immediate context real é uma classe RAGE residente em heap**
+(`context=0x2501a534128` com `ctxvt=0x2501a534130`, heap — não .rdata de
+módulo; o ctx do probe vivia noutra região), `type=IMMEDIATE(0)`. Os 7
+slots da família draw DIFFEREM (DrawIndexed/Draw/…Instanced×2/DrawAuto/
+…Indirect×2 — todos os alvos REais no vizinho `0x7fff16cxxxx/16dxxxx`);
+OMSetRenderTargets/RSSetViewports/ExecuteCommandList/ResizeBuffers SÃO
+IGUAIS. Foco medido: `UNFOCUSED` a janela toda (métrica por PID; protocolo
+da corrida deixava o PowerShell visível — dado, nunca causa declarada).
+
+**Controlo permanente anti-determinismo-de-vtable (a "paradoxo do
+Present"):** o slot 8 do swapchain REAL também DIFFERE do probe
+(`…18159530 → 0x7ffe4e207510`) **e no entanto o hook de Present do probe
+capturou 2000/2000 frames**. Logo: `endereço probe ≠ endereço real` NÃO
+implica falha de hook — quem chama resolve o entry point na instância real,
+e o padrão de chamada do jogo torna DIFFERENT não-decisivo em geral. H2 está
+PROVADA como *existência da diferença*; H2 como *causa* do DRAWPATH_ZERO
+**não** está provada. E "renderer deferred ≠ deferred context":
+`type=IMMEDIATE(0)` descreve apenas aquele contexto imediato — sem evidência
+CreateDeferredContext→FinishCommandList→ExecuteCommandList não se afirma
+nada sobre contextos diferidos.
+
+### 5.4 Microtest v3.6 — caminho de draw REAL (2 hooks nos endereços reais)
+
+Pergunta binária: **as funções para que a vtable do contexto REAL aponta
+(slots 12 DrawIndexed, 13 Draw — lidos em runtime, nunca hardcoded) recebem
+chamadas durante o gameplay?** No bloco do primeiro Present (o contexto
+real já está em escopo), ler `realCtxVt[12]`/`realCtxVt[13]` e instalar
+exatamente **2 hooks novos** via o `IHookEngine` existente (`create` ×2 +
+`enableAll()` — único primitivo de enable; `MH_EnableHook(MH_ALL_HOOKS)` é
+idempotente para hooks já armados). **Separação estrita probe/real:**
+contadores próprios (`realDraw`/`realDrawIndexed` → `rd=`/`rdi=` na linha
+`draws` e `rdraws=` no summary — nunca somados em `draws=`), first-fire
+próprio (`RLCAP1 first REAL slot=Draw ctx=0x…`), instalação própria
+(`RLCAP1 realhook target=Draw addr=0x… ok=1`), veredicto próprio
+(`RLCAP1 real verdict2=REALHOOKS_ARMED count=2 total=16` |
+`REALHOOKS_FAIL`; summary `rverdict=REALDRAW_ACTIVE | REALDRAW_ZERO |
+REALHOOKS_ABSENT`). **Atribuição de módulo** dos 4 endereços draw
+(probe/real × Draw/DrawIndexed): `GetModuleHandleExA(FROM_ADDRESS |
+UNCHANGED_REFCOUNT)` + `GetModuleFileNameA` (rota barata/segura aprovada;
+linha por execução, fora do hot path) → `RLCAP1 owner name=Draw
+target=PROBE|REAL addr=… module=…`. **Foco v2 (só medição, nunca gate):**
+W = foreground HWND == `OutputWindow` do swapchain real (capturado via
+`GetDesc` no discovery) e P = foreground PID == pid do jogo (a métrica
+v3.5), reportados separados com os valores crus
+(`RLCAP1 focus init W=… P=… sc=0x… fg=0x… fgpid=… pid=…` ;
+`focus transition W=a->b P=c->d …`). Re-arm continua a abrir janela nova sem
+recarregar DLL/loader (os 2 hooks reais persistem; contadores reiniciam com
+a janela). Total: **16 hooks (14 PROBE + 2 REAL)**; loader byte-idêntico;
+nenhuma outra área do RenderLift tocada. Leitura dos ramos (a corrida do
+utilizador decide): **A** rd/rdi > 0 → o problema era o entry-point do
+probe; **B** rd/rdi = 0 → investigar a cadeia CreateDeferredContext/
+FinishCommandList/ExecuteCommandList (evidência primeiro — NÃO hooks às
+cegas); **C** draws reais > 0 mas om/vp = 0 → usar os draws reais como
+entrada de pass/RT; **D** draws periódicos → preservar dados e achar o
+padrão. **Resultado: PENDENTE do teste do utilizador (lab pack v3.6).**
 
 ## 6. Roadmap da camada
 
