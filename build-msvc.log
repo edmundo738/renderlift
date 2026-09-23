@@ -9,7 +9,6 @@ MSBuild version 18.9.1+a81b43525 for .NET Framework
   main.cpp
   GameProfile.cpp
   hook.c
-  trampoline.c
 C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.51.36231\include\xutility(5094,18): warning C4244: '=': conversion from 'const wchar_t' to 'char', possible loss of data [D:\a\renderlift\renderlift\build\tools\renderlift-loader\renderlift-loader.vcxproj]
   (compiling source file '../../../tools/renderlift-loader/main.cpp')
       C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.51.36231\include\xutility(5094,18):
@@ -49,11 +48,12 @@ C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.51.36231
               _SizeTy=unsigned __int64
           ]
   
-  Generating Code...
+  trampoline.c
   hde64.c
   Generating Code...
   renderlift-loader.vcxproj -> D:\a\renderlift\renderlift\build\bin\Release\RenderLift.Loader.exe
   minhook.vcxproj -> D:\a\renderlift\renderlift\build\lib\Release\minhook.lib
+  Generating Code...
   rl-core.vcxproj -> D:\a\renderlift\renderlift\build\lib\Release\rl-core.lib
   Building Custom Rule D:/a/renderlift/renderlift/backends/CMakeLists.txt
   Building Custom Rule D:/a/renderlift/renderlift/src/resolution/CMakeLists.txt
@@ -61,15 +61,15 @@ C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.51.36231
   HookEngine.cpp
   ResolutionManager.cpp
   Reconstruction.cpp
-  SpatialUpscaler.cpp
   Steering.cpp
+  SpatialUpscaler.cpp
   DynamicResolutionController.cpp
-  Generating Code...
-  EdgeUpscaler.cpp
   CaptureFormat.cpp
-  rl-resolution.vcxproj -> D:\a\renderlift\renderlift\build\lib\Release\rl-resolution.lib
+  EdgeUpscaler.cpp
   Generating Code...
+  rl-resolution.vcxproj -> D:\a\renderlift\renderlift\build\lib\Release\rl-resolution.lib
   FrameCapture.cpp
+  Generating Code...
   rl-reconstruction.vcxproj -> D:\a\renderlift\renderlift\build\lib\Release\rl-reconstruction.lib
   ResourceClassifier.cpp
 D:\a\renderlift\renderlift\backends\common\src\obs\ResourceClassifier.cpp(85,49): warning C4305: 'initializing': truncation from 'double' to 'float' [D:\a\renderlift\renderlift\build\backends\rl-backend-common.vcxproj]
@@ -79,16 +79,16 @@ D:\a\renderlift\renderlift\backends\common\src\obs\ResourceClassifier.cpp(89,56)
   Building Custom Rule D:/a/renderlift/renderlift/backends/CMakeLists.txt
   Building Custom Rule D:/a/renderlift/renderlift/backends/CMakeLists.txt
   Building Custom Rule D:/a/renderlift/renderlift/backends/CMakeLists.txt
-  VulkanBackend.cpp
+  D3D12Backend.cpp
   D3D10Backend.cpp
-  D3D9Backend.cpp
   Building Custom Rule D:/a/renderlift/renderlift/backends/CMakeLists.txt
+  VulkanBackend.cpp
   D3D11Module.cpp
-  rl-backend-vulkan.vcxproj -> D:\a\renderlift\renderlift\build\lib\Release\rl-backend-vulkan.lib
+  rl-backend-d3d12.vcxproj -> D:\a\renderlift\renderlift\build\lib\Release\rl-backend-d3d12.lib
   rl-backend-d3d10.vcxproj -> D:\a\renderlift\renderlift\build\lib\Release\rl-backend-d3d10.lib
   Building Custom Rule D:/a/renderlift/renderlift/backends/CMakeLists.txt
-  D3D12Backend.cpp
-  rl-backend-d3d9.vcxproj -> D:\a\renderlift\renderlift\build\lib\Release\rl-backend-d3d9.lib
+  D3D9Backend.cpp
+  rl-backend-vulkan.vcxproj -> D:\a\renderlift\renderlift\build\lib\Release\rl-backend-vulkan.lib
   Building Custom Rule D:/a/renderlift/renderlift/backends/CMakeLists.txt
   D3D11Backend.cpp
 D:\a\renderlift\renderlift\backends\d3d11\src\win\D3D11Module.cpp(500,13): error C3646: 'probe': unknown override specifier [D:\a\renderlift\renderlift\build\backends\rl-backend-d3d11.vcxproj]
@@ -103,10 +103,10 @@ D:\a\renderlift\renderlift\backends\d3d11\src\win\D3D11Module.cpp(1327,7): error
       D:\a\renderlift\renderlift\backends\d3d11\src\win\D3D11Module.cpp(463,8):
       see declaration of 'rl::backend::`anonymous-namespace'::ModuleState'
   
-  rl-backend-d3d12.vcxproj -> D:\a\renderlift\renderlift\build\lib\Release\rl-backend-d3d12.lib
+  rl-backend-d3d9.vcxproj -> D:\a\renderlift\renderlift\build\lib\Release\rl-backend-d3d9.lib
   rl-backend-d3d11-kernel.vcxproj -> D:\a\renderlift\renderlift\build\lib\Release\rl-backend-d3d11-kernel.lib
-  Building Custom Rule D:/a/renderlift/renderlift/tools/renderlift-cli/CMakeLists.txt
   Building Custom Rule D:/a/renderlift/renderlift/tests/CMakeLists.txt
+  Building Custom Rule D:/a/renderlift/renderlift/tools/renderlift-cli/CMakeLists.txt
   main.cpp
   test_main.cpp
   test_types.cpp
